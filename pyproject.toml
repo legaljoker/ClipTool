@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cliptool"
+dynamic = ["version"]
+description = "Turn raw recordings into TikTok / YouTube ready videos: silence cutting, captions, vertical reframing, clip finding, speakers and avatars."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.22",
+    "PyYAML>=6.0",
+    "faster-whisper>=1.0",
+    "opencv-python-headless>=4.7,<5",
+]
+
+[project.optional-dependencies]
+ai = ["anthropic>=0.70"]
+speakers = ["pyannote.audio>=3.1"]
+emotions = ["transformers>=4.40", "torch"]
+autoeditor = ["auto-editor"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+cliptool = "cliptool.cli:main"
+
+[tool.setuptools]
+packages = ["cliptool"]
+
+[tool.setuptools.dynamic]
+version = {attr = "cliptool.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

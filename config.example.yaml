@@ -1,0 +1,89 @@
+# ClipTool settings.
+# The installer copies this file to config.yaml - edit config.yaml, not this one.
+# Anything you delete falls back to the built-in default.
+
+paths:
+  input_dir: input        # drop folder for batch mode
+  output_dir: output      # every job gets its own dated folder in here
+  avatars_dir: avatars    # speaker pictures (see avatars/README.txt)
+  log_dir: logs
+
+transcription:
+  model: small            # tiny / base / small / medium / large-v3 (bigger = better but slower)
+  language: null          # null = auto-detect, or e.g. en, es, de
+  device: auto            # auto / cpu / cuda (NVIDIA GPU)
+
+silence:
+  threshold_db: -35       # quieter than this = silence. Noisy room? try -30
+  min_silence: 0.6        # seconds of silence before it gets cut
+  padding: 0.15           # seconds kept before/after speech so cuts don't feel abrupt
+  use_auto_editor: false  # true = use auto-editor (pip install auto-editor) instead
+
+captions:
+  font: Arial             # any font installed on your computer, e.g. "Montserrat Black"
+  font_size: 0            # 0 = automatic
+  uppercase: true
+  max_words: 3            # words on screen at once
+  primary_color: "#FFFFFF"
+  highlight_color: "#FFE000"  # the word being spoken right now
+  outline_color: "#000000"
+  position: lower         # bottom / lower / middle / top
+  pop: true               # enlarge the active word a little
+  speaker_colors: false   # each speaker gets their own color (needs speaker detection)
+
+reformat:
+  mode: smart             # smart (follow faces) / crop (center) / blur (blurred background)
+
+clips:
+  min_length: 30
+  max_length: 60
+  count: 5
+  use_ai: auto            # auto = use Claude when ANTHROPIC_API_KEY is set; false = never
+
+bestof:
+  target_length: 58       # seconds
+  moment_min: 3
+  moment_max: 15
+  max_per_source: 2       # max moments taken from any one video
+
+longform:
+  canvas: 1920x1080
+  chapters: true
+  reformat_mode: blur     # how vertical shorts are shown in a 16:9 video
+
+speakers:
+  engine: auto            # auto / builtin / pyannote
+  num_speakers: null      # set if you know it (more accurate)
+  max_speakers: 4
+  huggingface_token: ""   # only for pyannote - see README
+  names: {}
+  # names:
+  #   SPEAKER_1: Dave
+  #   SPEAKER_2: Sarah
+
+emotions:
+  engine: auto            # auto / builtin / transformer
+
+avatars:
+  layout: active          # active = only the person talking / all = everyone, talker highlighted
+  position: top-left      # top-left / top-right / bottom-left / bottom-right / center
+  size: 0.30              # fraction of the video width
+  talk_flap_seconds: 0.15
+
+export:
+  platforms: [tiktok, youtube_shorts]   # tiktok, youtube_shorts, instagram_reels, youtube, youtube_4k, source
+  loudnorm: true          # even out volume to platform standard (-14 LUFS)
+  preset: medium          # veryfast = quicker renders, slow = smaller files
+
+metadata:
+  use_ai: auto
+  num_titles: 5
+  num_hashtags: 8
+
+ai:
+  model: claude-opus-5-5
+  effort: medium
+
+batch:
+  watch_interval: 10      # seconds between checks in watch mode
+  move_processed: true    # move finished videos to input/processed
