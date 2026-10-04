@@ -70,7 +70,9 @@ def write_report(job: "JobResult", cfg: "Config") -> Path:
                                         for p in plats))
         if any(p.vertical for p in plats):
             add(f"  Vertical reformat mode: {o.reformat_mode or cfg.get_path('reformat.mode')}")
-    add(f"  Input videos: {len(job.prepared)}")
+    n_in = len(job.input_files) or len(job.prepared)
+    failed = n_in - len(job.prepared)
+    add(f"  Input videos: {n_in}" + (f"  ({failed} could not be processed)" if failed > 0 else ""))
     if job.finished:
         add(f"  Time taken: {(job.finished - job.started).seconds // 60}m {(job.finished - job.started).seconds % 60}s")
     add("")

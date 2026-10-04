@@ -128,3 +128,43 @@ def test_batch_drop_folder(media_dir, cfg, fake_whisper, tmp_path):
     assert (drop / "processed" / "wide.mp4").exists()
     for r in results:
         assert len(_videos(r, "tiktok")) == 1 and len(_videos(r, "instagram_reels")) == 1
+
+
+def test_filter_script_option_works_with_installed_ffmpeg(tmp_path):
+    from cliptool.ffmpeg_utils import ffmpeg, filter_script_args
+
+    script = tmp_path / "graph.filter"
+    script.write_text("[0:v]scale=32:32[v]", encoding="utf-8")
+    ffmpeg(["-f", "lavfi", "-i", "testsrc2=d=0.2", *filter_script_args(script), "-map", "[v]",
+            "-f", "null", "-"], desc="filter script test")
+
+
+def test_whisper_gets_ffmpeg_decoded_audio(media_dir, monkeypatch):
+    """faster-whisper must receive samples, not a path (its PyAV decoder breaks on some versions)."""
+    import sys
+    import types
+
+    import numpy as np
+
+    from cliptool import transcribe as tmod
+
+    seen = {}
+
+    class FakeModel:
+        def __init__(self, *a, **k):
+            pass
+
+        def transcribe(self, audio, **kwargs):
+            seen["audio"] = audio
+            w = types.SimpleNamespace(start=0.0, end=0.5, word=" hi", probability=0.9)
+            seg = types.SimpleNamespace(start=0.0, end=0.5, text=" hi", words=[w])
+            return iter([seg]), types.SimpleNamespace(language="en")
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=FakeModel))
+    tmod._model_cache.clear()
+    tr = tmod.transcribe(media_dir / "second.mp4", {"engine": "faster-whisper", "model": "tiny",
+                                                    "device": "cpu", "compute_type": "int8"})
+    assert isinstance(seen["audio"], np.ndarray) and seen["audio"].dtype == np.float32
+    assert abs(len(seen["audio"]) / 16000 - 12) < 0.2
+    assert tr.segments[0].text == "hi"
+    tmod._model_cache.clear()

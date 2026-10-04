@@ -98,6 +98,7 @@ class JobResult:
     products: list[Product] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     report_file: Optional[Path] = None
+    input_files: list[Path] = field(default_factory=list)
 
 
 def safe_name(s: str) -> str:
@@ -319,6 +320,7 @@ class Pipeline:
             files: list[Path] = []
             for i in inputs:
                 files += list_videos(Path(i))
+            job.input_files = files
             if not files:
                 raise ValueError("No video files found in the input you gave.")
             for src in files:

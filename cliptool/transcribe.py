@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
 
-from cliptool.ffmpeg_utils import fmt_time
+from cliptool.ffmpeg_utils import decode_audio, fmt_time
 from cliptool.logger import get_logger
 
 log = get_logger("transcribe")
@@ -189,7 +189,10 @@ def _transcribe_faster_whisper(path: Path, cfg: dict) -> Transcript:
         log.info("Loading Whisper model '%s' (first time downloads it, please wait)...", cfg["model"])
         _model_cache[key] = WhisperModel(cfg["model"], device=cfg["device"], compute_type=cfg["compute_type"])
     model = _model_cache[key]
-    seg_iter, info = model.transcribe(str(path), language=cfg.get("language") or None,
+    # Decode with ffmpeg ourselves: faster-whisper's own decoder (PyAV) breaks with
+    # some PyAV versions ("unexpected keyword argument 'metadata_errors'").
+    audio = decode_audio(path, 16000)
+    seg_iter, info = model.transcribe(audio, language=cfg.get("language") or None,
                                       word_timestamps=True, vad_filter=True)
     segments = []
     for s in seg_iter:

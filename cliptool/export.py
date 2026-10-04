@@ -14,7 +14,7 @@ from typing import Optional
 from cliptool import reformat
 from cliptool.avatars import TimelineEntry, build_tracks
 from cliptool.captions import write_ass
-from cliptool.ffmpeg_utils import ffmpeg, probe
+from cliptool.ffmpeg_utils import ffmpeg, filter_script_args, probe
 from cliptool.logger import get_logger
 from cliptool.transcribe import Transcript
 
@@ -108,7 +108,7 @@ def render(src: Path, out: Path, opts: RenderOptions, work_dir: Path) -> Path:
     script = work_dir / f"{tag}.filter"
     script.write_text(";\n".join(graph), encoding="utf-8")
 
-    args = [*inputs, "-filter_complex_script", script.name, "-map", "[vout]"]
+    args = [*inputs, *filter_script_args(Path(script.name)), "-map", "[vout]"]
     if info.has_audio:
         args += ["-map", "0:a:0"]
         if opts.loudnorm:

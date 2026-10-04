@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,41 @@ def run(cmd: Sequence[str], desc: str = "", cwd: Optional[Path] = None) -> subpr
 
 def ffmpeg(args: Sequence[str], desc: str = "", cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
     return run([ffmpeg_bin(), "-hide_banner", "-nostdin", "-y", *args], desc=desc, cwd=cwd)
+
+
+_script_option: Optional[str] = None
+
+
+def filter_script_args(script: Path) -> list[str]:
+    """Arguments that load a filter graph from a file.
+
+    ffmpeg 7+ uses `-/filter_complex FILE`; ffmpeg 9 removed the older
+    `-filter_complex_script FILE`, and ffmpeg 6 and older only know that one.
+    The installed ffmpeg is tested once to see which it accepts.
+    """
+    global _script_option
+    if _script_option is None:
+        with tempfile.TemporaryDirectory() as tmp:
+            test = Path(tmp) / "test.filter"
+            test.write_text("[0:v]null[v]", encoding="utf-8")
+            proc = subprocess.run([ffmpeg_bin(), "-hide_banner", "-nostdin", "-loglevel", "error",
+                                   "-f", "lavfi", "-i", "nullsrc=s=16x16:d=0.1", "-/filter_complex", str(test),
+                                   "-map", "[v]", "-f", "null", "-"], capture_output=True)
+        _script_option = "-/filter_complex" if proc.returncode == 0 else "-filter_complex_script"
+        log.debug("ffmpeg filter script option: %s", _script_option)
+    return [_script_option, str(script)]
+
+
+def decode_audio(path: Path, sample_rate: int = 16000) -> np.ndarray:
+    """Decode any audio/video file to mono float32 samples using ffmpeg."""
+    cmd = [ffmpeg_bin(), "-hide_banner", "-nostdin", "-loglevel", "error", "-i", str(path),
+           "-vn", "-ac", "1", "-ar", str(sample_rate), "-f", "f32le", "-"]
+    log.debug("RUN decode audio: %s", subprocess.list2cmdline(cmd))
+    proc = subprocess.run(cmd, capture_output=True)
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", "replace").strip().splitlines()[-5:]
+        raise FFmpegError(f"Could not read the audio of {Path(path).name}:\n" + "\n".join(err))
+    return np.frombuffer(proc.stdout, dtype=np.float32).copy()
 
 
 @dataclass

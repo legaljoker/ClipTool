@@ -9,6 +9,23 @@ When you change the application, add an entry at the top and bump the version in
 
 ---
 
+## [1.0.1] - 2026-10-04 - Fixes for newer ffmpeg and PyAV
+
+### Fixed
+- **Silence cutting and every final render failed with ffmpeg 9** ("Unrecognized option
+  'filter_complex_script'"). ffmpeg 9 removed that option. ClipTool now checks which option
+  the installed ffmpeg supports (`-/filter_complex` on ffmpeg 7 and newer, the old option on
+  ffmpeg 6 and older).
+- **Transcription failed with "open() got an unexpected keyword argument 'metadata_errors'"**.
+  faster-whisper's built-in audio reader (PyAV) is incompatible with some PyAV versions.
+  ClipTool now reads the audio with ffmpeg itself and gives faster-whisper the decoded audio,
+  so the PyAV version no longer matters.
+- REPORT.txt said "Input videos: 0" when a video failed. It now shows how many videos were given
+  and how many could not be processed.
+
+### Added
+- Tests for both fixes.
+
 ## [1.0.0] - 2026-10-03 - First release
 
 ### Added

@@ -7,7 +7,8 @@ from bisect import bisect_right
 from pathlib import Path
 from typing import Optional
 
-from cliptool.ffmpeg_utils import (INTERMEDIATE_AUDIO, INTERMEDIATE_VIDEO, ffmpeg, probe, run)
+from cliptool.ffmpeg_utils import (INTERMEDIATE_AUDIO, INTERMEDIATE_VIDEO, ffmpeg, filter_script_args,
+                                   probe, run)
 from cliptool.logger import get_logger
 from cliptool.transcribe import Segment, Transcript, Word
 
@@ -145,7 +146,7 @@ def _render_keep(src: Path, out: Path, keep: list[Range], has_audio: bool, work_
     script = work_dir / f"{src.stem}_silencecut.filter"
     script.write_text(";\n".join(parts), encoding="utf-8")
     maps = ["-map", "[v]"] + (["-map", "[a]"] if has_audio else [])
-    ffmpeg(["-i", src, "-filter_complex_script", script, *maps, *INTERMEDIATE_VIDEO,
+    ffmpeg(["-i", src, *filter_script_args(script), *maps, *INTERMEDIATE_VIDEO,
             *(INTERMEDIATE_AUDIO if has_audio else []), "-movflags", "+faststart", out],
            desc=f"remove silence from {src.name}")
 
