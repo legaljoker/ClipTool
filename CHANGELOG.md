@@ -9,6 +9,49 @@ When you change the application, add an entry at the top and bump the version in
 
 ---
 
+## [1.1.0] - 2026-10-31 - Video editor and frame styles
+
+### Added
+- **Video editor in your web browser** (`ClipTool-Editor.bat`, `./editor.sh`, menu option **E**, or
+  `cliptool editor`). It runs only on your computer.
+  - Live preview of every option: style, transitions, effects, captions, avatars, text and pictures.
+  - **Exact preview** renders the current frame with ffmpeg so you see the real result.
+  - Drag and drop: add videos, effects, transitions, text and pictures onto the timeline or the
+    video. Drag captions, text and pictures on the video to place them, and resize pictures/text
+    with their corner handle.
+  - Timeline with tracks for captions, text & pictures, effects and video. Overlapping items stack
+    into lanes. Timeline zoom (slider, +/−, Ctrl + mouse wheel), snapping, and a playhead you can drag.
+  - **Cut tool**: cut at the playhead (S), delete pieces, trim clip edges, and move clips earlier or
+    later. Captions and effects after a cut move with the video.
+  - **Effects with duration bars** (drag the ends to set how long they last): zoom in, zoom out,
+    camera shake, flash, black & white, sepia, blur, vignette, invert, glitch. You choose the zoom
+    spot on the video.
+  - **Transitions** between clips: crossfade, fade through black/white, dissolve, wipes, slides,
+    circle open/close, radial, pixelize, zoom. Adjustable length.
+  - **Captions with people**: create captions from speech (optionally detecting who is talking and
+    their expression), edit text and timing, and choose Person 1, Person 2... and an expression
+    for each caption. The person's avatar for that expression is shown with the caption in the
+    final video, above, left or right of the text, and alternates with a "talking" image while
+    they speak.
+  - **People & avatars**: a picture per expression for each person. Drop your own images, or
+    generate a full set of cartoon faces or a set from one photo.
+  - Projects save automatically, with unlimited undo/redo.
+  - Rendering shows progress and can be cancelled. Uses the TikTok / Shorts / Reels / YouTube /
+    Square size and bitrate.
+- **New expressions:** ROFL, LOL, Disappointed and Face slap, with automatic detection from the words
+  ("lmao", "haha", "oh well", "facepalm"...) and sensible picture fallbacks
+  (ROFL → LOL → Happy, Face slap → Disappointed → Mad...).
+- **Frame styles** that keep the whole video in the middle: blur, blur_dark, blur_bw, pixelate,
+  mirror, color, gradient, black. Settings for the size and position of the middle video.
+- Tests for the editor, including a check that the browser preview and the final render put clips
+  and caption words at the same times.
+
+### Changed
+- **Blur is now the default** for TikTok, YouTube Shorts and Reels everywhere (menu, commands,
+  batch). It is controlled by the new `reformat.style` setting, so older config files that said
+  `mode: smart` no longer override it.
+- The menu lists all frame styles when it asks how to make a video vertical.
+
 ## [1.0.1] - 2026-10-04 - Fixes for newer ffmpeg and PyAV
 
 ### Fixed

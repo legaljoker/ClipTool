@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClipTool Editor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E✂%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">✂️ ClipTool <span>Editor</span></div>
+  <button class="btn ghost" id="btn-projects" title="Open or create a project">📁 Projects</button>
+  <input id="project-name" class="name-input" spellcheck="false" title="Project name">
+  <select id="preset" title="Video shape / platform"></select>
+  <div class="spacer"></div>
+  <button class="btn ghost icon" id="btn-undo" title="Undo (Ctrl+Z)">↶</button>
+  <button class="btn ghost icon" id="btn-redo" title="Redo (Ctrl+Y)">↷</button>
+  <span id="save-state" class="muted"></span>
+  <button class="btn" id="btn-exact" title="Render this exact frame with ffmpeg, exactly as the final video will look">🔍 Exact preview</button>
+  <div id="render-progress" class="progress hidden"><div class="bar-fill"></div><span></span><button class="link" id="btn-cancel-render">Cancel</button></div>
+  <button class="btn primary" id="btn-render">⬇ Render video</button>
+</header>
+
+<main class="workspace">
+  <nav class="tabs" id="tabs">
+    <button data-tab="media" class="active"><b>🎬</b>Media</button>
+    <button data-tab="captions"><b>💬</b>Captions</button>
+    <button data-tab="people"><b>🙂</b>People</button>
+    <button data-tab="style"><b>🖼</b>Style</button>
+    <button data-tab="effects"><b>✨</b>Effects</button>
+    <button data-tab="transitions"><b>⇄</b>Transitions</button>
+    <button data-tab="text"><b>T</b>Text &amp; Pics</button>
+    <button data-tab="export"><b>⬇</b>Export</button>
+  </nav>
+  <section class="panel" id="panel"></section>
+
+  <section class="stage" id="stage">
+    <div class="frame-box">
+      <canvas></canvas>
+      <div class="overlay-layer"></div>
+    </div>
+  </section>
+
+  <aside class="inspector" id="inspector"></aside>
+</main>
+
+<section class="transport">
+  <button class="btn icon" id="btn-play" title="Play / pause (Space)">▶</button>
+  <span id="time" class="time">0:00.00 / 0:00.00</span>
+  <div class="sep"></div>
+  <button class="btn" id="btn-split" title="Cut the clip at the playhead (S)">✂ Cut here</button>
+  <button class="btn" id="btn-delete" title="Delete the selected item (Delete)">🗑 Delete</button>
+  <label class="check" title="Bars stick to the playhead and to other bars"><input type="checkbox" id="snap" checked> Snap</label>
+  <div class="spacer"></div>
+  <span class="muted">Timeline zoom</span>
+  <button class="btn icon" id="btn-zoom-out" title="Zoom out (-)">−</button>
+  <input type="range" id="zoom" min="8" max="600" value="60">
+  <button class="btn icon" id="btn-zoom-in" title="Zoom in (+)">+</button>
+  <button class="btn" id="btn-fit" title="Fit the whole video">Fit</button>
+</section>
+
+<section class="timeline" id="timeline">
+  <div class="tl-labels"></div>
+  <div class="tl-scroll"><div class="tl-inner"></div></div>
+</section>
+
+<div class="modal hidden" id="modal"><div class="modal-card"><div class="modal-body"></div></div></div>
+<div class="toasts" id="toasts"></div>
+<input type="file" id="file-pick" class="hidden" multiple>
+
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

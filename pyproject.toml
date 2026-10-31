@@ -26,7 +26,10 @@ dev = ["pytest>=7"]
 cliptool = "cliptool.cli:main"
 
 [tool.setuptools]
-packages = ["cliptool"]
+packages = ["cliptool", "cliptool.editor"]
+
+[tool.setuptools.package-data]
+"cliptool.editor" = ["static/*.html", "static/css/*.css", "static/js/*.js"]
 
 [tool.setuptools.dynamic]
 version = {attr = "cliptool.__version__"}

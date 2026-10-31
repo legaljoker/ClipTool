@@ -3,10 +3,16 @@
 Turn raw recordings into finished **TikTok**, **YouTube Shorts**, **Instagram Reels** and
 **YouTube** videos.
 
+- **Video editor**: a drag-and-drop editor that opens in your web browser. It has a live preview,
+  a timeline with cut and trim, effects with adjustable duration bars, transitions, zoom, text,
+  stickers, and captions that show each speaker's avatar with the right expression.
+  See section 3.
 - **Auto silence-cutter**: removes dead air.
 - **Auto captions**: Whisper transcription burned in as bold TikTok-style captions, with the spoken
   word highlighted.
-- **16:9 to 9:16 reformatter**: follows faces, center-crops, or uses a blurred background.
+- **16:9 to 9:16 reformatter**: keeps the whole video in the middle with a background style
+  (blur by default, plus dark blur, black & white blur, pixelate, mirror, color, gradient or black),
+  or fills the screen by cropping (follow faces / center crop).
 - **Clip finder**: scans a long VOD and suggests the best 30-60 second moments.
 - **Best-of**: picks the best moments from several shorts and combines them into one short.
 - **Long video**: joins several shorts into one YouTube video with chapters.
@@ -117,7 +123,34 @@ All menu options are also available as commands. Run `./run.sh --help` to list t
 
 ---
 
-## 3. Speaker pictures with expressions
+## 3. The video editor
+
+Start it with **`ClipTool-Editor.bat`** (Windows), **`./editor.sh`** (macOS/Linux), or menu option
+**E**. It opens in your web browser. It runs only on your computer; nothing is uploaded to the
+internet. Keep the black window open while you edit.
+
+Each project is saved automatically in `projects/<name>/`. Finished videos go to `projects/<name>/exports/`.
+
+| To do this | Do this |
+|---|---|
+| **Add videos** | Drag video files onto the window, or use **Media**. **Add from the input folder** uses the file where it is, without copying it. |
+| **Pick a style** | **Style** tab: blur, blur dark, black & white blur, pixelate, mirror, color, gradient, black, or fill the screen. Sliders set the video size, its position and the blur amount. |
+| **Cut out a part** | Put the playhead at the start and press **S**. Move to the end and press **S** again. Click the middle piece and press **Delete**. |
+| **Trim** | Drag the left or right edge of a clip on the timeline. |
+| **Add an effect** | Drag it from **Effects** onto the timeline or the video. **Drag the ends of its bar to set how long it lasts.** For zooms, drag the yellow circle on the video to choose the spot. |
+| **Add a transition** | Drag it from **Transitions** onto the start of a clip (the **+**), or select a clip and pick one in the panel on the right. |
+| **Zoom** | Use the timeline zoom slider, **+**/**−**, or Ctrl + mouse wheel. The **Zoom in** and **Zoom out** effects zoom the video itself. |
+| **Captions** | **Captions** tab, **Create captions from speech**. ClipTool can also work out who is talking and guess expressions. You can edit any caption, and choose **who is talking** and their **expression** per caption. |
+| **Place the captions** | Drag the caption on the video. |
+| **People & avatars** | **People** tab: one person per speaker. Give each a picture for every expression: Neutral, Happy, Sad, Mad, Angry, ROFL, LOL, Disappointed, Face slap (plus Excited, Surprised, Scared). Drop your own images, or click **Cartoon faces** / **From a photo** to make a full set. Each set includes "talking" versions that alternate while the person speaks. |
+| **Text & pictures** | **Text & Pics** tab, or drop a picture straight onto the video. Drag to move it and drag the yellow corner to resize. Its bar on the timeline sets when it shows. |
+| **Check the real result** | **Exact preview** renders the current frame with ffmpeg, exactly as the final video will look. |
+| **Render** | **Render video**. The video shape (TikTok / Shorts / Reels / YouTube / Square) sets the size and bitrate. |
+
+Keyboard: **Space** play/pause · **S** cut · **Delete** delete · **Ctrl+Z / Ctrl+Y** undo/redo ·
+**← →** step one frame (hold Shift for 1 second).
+
+## 4. Speaker pictures with expressions (menu tools)
 
 1. Run **9) Speakers & expressions** once without pictures. `REPORT.txt` shows who is
    `SPEAKER_1`, `SPEAKER_2` and so on.
@@ -142,7 +175,7 @@ See `avatars/README.txt` for details.
 
 ---
 
-## 4. Optional upgrades
+## 5. Optional upgrades
 
 | Upgrade | What it improves | How |
 |---|---|---|
@@ -158,14 +191,16 @@ or activate the environment first: `.venv\Scripts\activate` on Windows,
 
 ---
 
-## 5. Settings
+## 6. Settings
 
 Edit **`config.yaml`**. Every setting has a comment. The ones people change most:
 
 - `transcription.model`: `base` is faster, `medium` is more accurate.
 - `silence.threshold_db` / `min_silence`: how aggressive silence cutting is.
 - `captions`: font, colors, words per screen, position.
-- `reformat.mode`: `smart`, `crop` or `blur`.
+- `reformat.style`: `blur` (the default for TikTok and Shorts), `blur_dark`, `blur_bw`, `pixelate`,
+  `mirror`, `color`, `gradient`, `black`, `smart` or `crop`. `reformat.scale` sets the size of the
+  video in the middle.
 - `clips.min_length` / `max_length` / `count`.
 - `export.platforms`: the default platforms.
 
@@ -184,12 +219,15 @@ file downloads. Volume is normalized to -14 LUFS, the loudness these platforms t
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 - **"ffmpeg was not found"**: install ffmpeg (see section 1), then open a new terminal window.
 - **Transcription is slow**: set `transcription.model: base` in `config.yaml`, or use a GPU.
 - **Captions use the wrong font**: set `captions.font` to a font that is installed on your computer.
 - **Speakers are mixed up**: set `num_speakers`, install pyannote, or edit the timeline file.
+- **The editor preview is black for a video**: some formats (for example HEVC from phones, or MKV)
+  can't play in a browser. ClipTool makes a preview copy automatically; wait for "preparing preview"
+  to disappear in **Media**. The final render always uses the original file.
 - Everything ClipTool does is logged in `logs/cliptool.log`, and in `job.log` inside each job folder.
 
 ## For developers

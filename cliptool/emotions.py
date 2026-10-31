@@ -20,10 +20,18 @@ from cliptool.transcribe import Transcript
 
 log = get_logger("emotions")
 
-EXPRESSIONS = ["neutral", "happy", "excited", "sad", "mad", "angry", "surprised", "scared"]
+EXPRESSIONS = ["neutral", "happy", "sad", "mad", "angry", "rofl", "lol", "disappointed", "face_slap",
+               "excited", "surprised", "scared"]
+EXPRESSION_LABELS = {"neutral": "Neutral", "happy": "Happy", "sad": "Sad", "mad": "Mad", "angry": "Angry",
+                     "rofl": "ROFL", "lol": "LOL", "disappointed": "Disappointed", "face_slap": "Face slap",
+                     "excited": "Excited", "surprised": "Surprised", "scared": "Scared"}
 
 # Which picture to use when a person doesn't have a picture for an expression.
 FALLBACKS = {
+    "rofl": ["lol", "happy"],
+    "lol": ["rofl", "happy"],
+    "disappointed": ["sad"],
+    "face_slap": ["disappointed", "mad"],
     "excited": ["happy"],
     "angry": ["mad"],
     "mad": ["angry"],

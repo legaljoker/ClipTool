@@ -101,6 +101,11 @@ class JobResult:
     input_files: list[Path] = field(default_factory=list)
 
 
+def reformat_style(cfg: Config) -> str:
+    """The vertical style from config (`reformat.style`; old configs used `reformat.mode`)."""
+    return cfg.get_path("reformat.style") or cfg.get_path("reformat.mode") or "blur"
+
+
 def safe_name(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9_\-]+", "_", s).strip("_")[:60] or "video"
 
@@ -118,7 +123,8 @@ class Pipeline:
         self.opts = opts
         if opts.avatars:
             opts.speakers = opts.expressions = True
-        self.reformat_mode = opts.reformat_mode or cfg.get_path("reformat.mode", "smart")
+        self.reformat_mode = opts.reformat_mode or reformat_style(cfg)
+        self.style_opts = {k: cfg.get_path(f"reformat.{k}") for k in ("scale", "offset_y", "color", "color2")}
         self.names = {str(k): str(v) for k, v in (cfg.get_path("speakers.names") or {}).items()}
 
     # ------------------------------------------------------------------ stage 1
@@ -228,7 +234,8 @@ class Pipeline:
             by_video = {p.video: p for p in preps}
             for i, m in enumerate(chosen):
                 part = work / f"bestof_part{i:02d}.mp4"
-                comp.normalize(m.source, part, w, h, self.reformat_mode, 30, m.clip.start, m.clip.end)
+                comp.normalize(m.source, part, w, h, self.reformat_mode, 30, m.clip.start, m.clip.end,
+                               self.style_opts)
                 parts.append(part)
                 trs.append((by_video[m.source].transcript.slice(m.clip.start, m.clip.end), m.out_offset))
             out = work / "bestof_combined.mp4"
@@ -287,6 +294,7 @@ class Pipeline:
                 ropts = RenderOptions(
                     platform=plat_key,
                     reformat_mode=self.reformat_mode,
+                    style_opts=self.style_opts,
                     blur_strength=int(cfg.get_path("reformat.blur_strength", 20)),
                     transcript=product.transcript if o.captions else None,
                     captions_cfg=cfg["captions"],

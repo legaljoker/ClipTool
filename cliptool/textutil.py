@@ -22,7 +22,7 @@ way back much many every pretty sure maybe probably see look little bit
 
 EMOTION_WORDS: dict[str, set[str]] = {
     "happy": set("""happy glad love loved loving great awesome amazing nice good fun funny enjoy enjoyed
-        beautiful wonderful fantastic perfect excellent cool sweet thanks thank laugh laughing haha lol
+        beautiful wonderful fantastic perfect excellent cool sweet thanks thank laugh
         smile yay best favorite delighted pleased proud lucky win won winning""".split()),
     "excited": set("""wow omg insane crazy incredible unbelievable epic huge massive hyped excited
         can't-wait finally let's lets go woo woohoo whoa yes""".split()),
@@ -35,6 +35,12 @@ EMOTION_WORDS: dict[str, set[str]] = {
         terrible horrible awful worst liar lied screw shut kill""".split()),
     "surprised": set("""what really seriously no-way wait surprised surprise shocked shocking whoa
         unexpected suddenly""".split()),
+    "lol": set("""lol haha hahaha hah hehe funny hilarious joke joking kidding laughing""".split()),
+    "rofl": set("""rofl lmao lmfao hahahaha dying dead crying-laughing can't-breathe""".split()),
+    "disappointed": set("""disappointed disappointing unfortunately meh letdown
+        oh-well come-on""".split()),
+    "face_slap": set("""facepalm why-would are-you-kidding seriously-dude dumbest idiot
+        what-were-you-thinking unbelievable""".split()),
     "scared": set("""scared afraid fear terrified terrifying nervous anxious worried worry scary creepy
         panic""".split()),
 }

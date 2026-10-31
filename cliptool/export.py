@@ -58,8 +58,9 @@ def get_platform(key: str) -> Platform:
 @dataclass
 class RenderOptions:
     platform: str = "source"
-    reformat_mode: str = "smart"
+    reformat_mode: str = "blur"
     blur_strength: int = 20
+    style_opts: Optional[dict] = None  # scale / offset_y / color / color2 for frame styles
     transcript: Optional[Transcript] = None  # captions are burned in when set
     captions_cfg: Optional[dict] = None
     timeline: Optional[list[TimelineEntry]] = None  # avatars are overlaid when set
@@ -82,7 +83,8 @@ def render(src: Path, out: Path, opts: RenderOptions, work_dir: Path) -> Path:
     keys = None
     if opts.reformat_mode == "smart" and (tw, th) != (info.width, info.height):
         keys = reformat.analyze_smart(src, info, tw, th)
-    graph = [reformat.build_filter(info, tw, th, opts.reformat_mode, "0:v", "base", keys, opts.blur_strength)]
+    graph = [reformat.build_filter(info, tw, th, opts.reformat_mode, "0:v", "base", keys, opts.blur_strength,
+                                   opts.style_opts)]
     cur = "base"
     inputs: list = ["-i", src]
 

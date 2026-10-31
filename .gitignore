@@ -19,3 +19,5 @@ avatars/*
 !avatars/Example_Person/
 avatars/Example_Person/*
 !avatars/Example_Person/README.txt
+projects/*
+!projects/.gitkeep

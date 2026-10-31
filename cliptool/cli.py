@@ -8,6 +8,7 @@ from pathlib import Path
 from cliptool import __version__
 from cliptool.config import APP_ROOT, load_config
 from cliptool.export import PLATFORMS
+from cliptool.reformat import CROP_MODES, FRAME_STYLES
 from cliptool.logger import setup_logging
 from cliptool.pipeline import MODES, JobOptions, batch, run_job
 
@@ -38,7 +39,8 @@ def _add_common(p: argparse.ArgumentParser, inputs: bool = True) -> None:
     p.add_argument("--name", help="name for the output folder")
     p.add_argument("--platforms", help=f"comma list: {', '.join(PLATFORMS)}")
     p.add_argument("--mode", choices=list(MODES), help="what kind of output to make")
-    p.add_argument("--reformat-mode", choices=["smart", "crop", "blur"])
+    p.add_argument("--reformat-mode", "--style", dest="reformat_mode",
+                   choices=[*FRAME_STYLES, *CROP_MODES], help="how wide videos are made vertical")
     p.add_argument("--silence-cut", action="store_true", help="remove dead air")
     p.add_argument("--captions", action="store_true", help="burn in captions")
     p.add_argument("--find-clips", action="store_true", help="find best clips")
@@ -62,6 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("-v", "--verbose", action="store_true", help="show detailed output")
     sub = ap.add_subparsers(dest="command")
     sub.add_parser("menu", help="interactive menu (default)")
+    ed = sub.add_parser("editor", help="open the video editor in your web browser")
+    ed.add_argument("--port", type=int, default=8765)
+    ed.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
     for name, (help_text, _) in PRESETS.items():
         _add_common(sub.add_parser(name, help=help_text, description=help_text))
     b = sub.add_parser("batch", help="process every video in a drop folder")
@@ -133,6 +138,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in (None, "menu"):
         from cliptool.menu import run_menu
         return run_menu(cfg)
+    if args.command == "editor":
+        from cliptool.editor.server import run_editor
+        return run_editor(cfg, args.port, not args.no_browser)
     if args.command == "doctor":
         from cliptool.doctor import run_doctor
         return 0 if run_doctor(cfg) else 1

@@ -12,6 +12,7 @@ from cliptool.ffmpeg_utils import FFmpegError, VIDEO_EXTENSIONS, ffmpeg_bin, lis
 from cliptool.pipeline import JobOptions, batch, run_job
 
 MENU = [
+    ("E", "Open the VIDEO EDITOR (drag & drop, preview, captions, avatars, effects)", "editor"),
     ("1", "Quick short: remove silence + captions + vertical + titles", "quick"),
     ("2", "Transcribe videos (text + subtitle files)", "transcribe"),
     ("3", "Remove silence / dead air", "silence"),
@@ -89,13 +90,22 @@ def ask_platforms(cfg: Config, default: Optional[list[str]] = None) -> list[str]
 
 
 def ask_reformat(cfg: Config) -> str:
+    from cliptool.pipeline import reformat_style
+    from cliptool.reformat import CROP_MODES, FRAME_STYLES
+
+    choices = list(FRAME_STYLES.items()) + list(CROP_MODES.items())
     print("\nHow should wide videos be made vertical?")
-    print("  1) smart - follow the face of whoever is on screen")
-    print("  2) crop  - simple center crop")
-    print("  3) blur  - show the whole picture over a blurred background")
-    current = cfg.get_path("reformat.mode", "smart")
-    raw = ask("Choice", {"smart": "1", "crop": "2", "blur": "3"}.get(current, "1"))
-    return {"1": "smart", "2": "crop", "3": "blur"}.get(raw, raw if raw in ("smart", "crop", "blur") else current)
+    print("  Keep the whole video in the middle:")
+    for i, (key, label) in enumerate(choices, 1):
+        if i == len(FRAME_STYLES) + 1:
+            print("  Fill the screen (cuts off the sides):")
+        print(f"   {i:>2}) {key:<10} {label}")
+    current = reformat_style(cfg)
+    keys = [k for k, _ in choices]
+    raw = ask("Choice", str(keys.index(current) + 1) if current in keys else "1")
+    if raw.isdigit() and 1 <= int(raw) <= len(keys):
+        return keys[int(raw) - 1]
+    return raw if raw in keys else current
 
 
 def custom_options(cfg: Config) -> Optional[JobOptions]:
@@ -210,7 +220,7 @@ def run_menu(cfg: Config) -> int:
         for key, label, _ in MENU:
             print(f"  {key:>2}) {label}")
         try:
-            choice_key = ask("\nChoose an option", "1")
+            choice_key = ask("\nChoose an option", "E").upper()
         except (KeyboardInterrupt, EOFError):
             print()
             return 0
@@ -220,6 +230,10 @@ def run_menu(cfg: Config) -> int:
             continue
         if action == "exit":
             return 0
+        if action == "editor":
+            from cliptool.editor.server import run_editor
+            run_editor(cfg)
+            continue
         if action == "doctor":
             from cliptool.doctor import run_doctor
             run_doctor(cfg)

@@ -6,6 +6,7 @@ paths:
   input_dir: input        # drop folder for batch mode
   output_dir: output      # every job gets its own dated folder in here
   avatars_dir: avatars    # speaker pictures (see avatars/README.txt)
+  projects_dir: projects  # video editor projects
   log_dir: logs
 
 transcription:
@@ -32,7 +33,14 @@ captions:
   speaker_colors: false   # each speaker gets their own color (needs speaker detection)
 
 reformat:
-  mode: smart             # smart (follow faces) / crop (center) / blur (blurred background)
+  # How wide videos are made vertical for TikTok / Shorts / Reels.
+  # Whole video in the middle: blur, blur_dark, blur_bw, pixelate, mirror, color, gradient, black
+  # Fill the screen by cropping: smart (follows faces), crop (center)
+  style: blur
+  scale: 1.0              # size of the middle video (1.2 = zoomed in a little)
+  offset_y: 0.0           # move the middle video up (-0.1) or down (0.1)
+  color: "#101018"        # for 'color' and 'gradient'
+  color2: "#2575fc"       # second gradient color
 
 clips:
   min_length: 30

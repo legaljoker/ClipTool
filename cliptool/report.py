@@ -69,7 +69,7 @@ def write_report(job: "JobResult", cfg: "Config") -> Path:
         add("  Platforms: " + ", ".join(f"{p.label} ({p.width}x{p.height})" if p.width else p.label
                                         for p in plats))
         if any(p.vertical for p in plats):
-            add(f"  Vertical reformat mode: {o.reformat_mode or cfg.get_path('reformat.mode')}")
+            add(f"  Vertical reformat mode: {o.reformat_mode or cfg.get_path('reformat.style') or cfg.get_path('reformat.mode')}")
     n_in = len(job.input_files) or len(job.prepared)
     failed = n_in - len(job.prepared)
     add(f"  Input videos: {n_in}" + (f"  ({failed} could not be processed)" if failed > 0 else ""))

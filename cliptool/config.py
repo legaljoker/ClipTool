@@ -19,6 +19,7 @@ DEFAULTS: dict[str, Any] = {
         "input_dir": "input",
         "output_dir": "output",
         "avatars_dir": "avatars",
+        "projects_dir": "projects",  # editor projects
         "log_dir": "logs",
     },
     "transcription": {
@@ -50,10 +51,16 @@ DEFAULTS: dict[str, Any] = {
         "speaker_colors": False,  # give each speaker their own text color
     },
     "reformat": {
-        # smart = follow faces (needs opencv), crop = center crop,
-        # blur = fit whole frame on a blurred background
-        "mode": "smart",
+        # How wide videos are made vertical (TikTok, Shorts, Reels).
+        # Keep the whole video in the middle: blur, blur_dark, blur_bw, pixelate, mirror,
+        #   color, gradient, black
+        # Fill the frame by cropping: smart (follows faces, needs opencv), crop (center)
+        "style": "blur",
         "blur_strength": 20,
+        "scale": 1.0,  # size of the middle video (1.0 = full width, 1.2 = a bit zoomed in)
+        "offset_y": 0.0,  # move the middle video up (-) or down (+), fraction of the height
+        "color": "#101018",  # for the 'color' style, and first color of 'gradient'
+        "color2": "#2575fc",  # second color of 'gradient'
     },
     "clips": {
         "min_length": 30,

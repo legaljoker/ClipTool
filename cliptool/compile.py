@@ -13,13 +13,13 @@ log = get_logger("compile")
 
 
 def normalize(src: Path, out: Path, width: int, height: int, mode: str = "blur", fps: int = 30,
-              start: float | None = None, end: float | None = None) -> Path:
+              start: float | None = None, end: float | None = None, style_opts: dict | None = None) -> Path:
     """Re-encode `src` (optionally only start..end) to a fixed canvas/fps/audio format for joining."""
     info = probe(src)
     keys = reformat.analyze_smart(src, info, width, height) if mode == "smart" else None
     if keys and start:  # keyframes are in source time; the trimmed stream starts at 0
         keys = [(max(0.0, t - start), x) for t, x in keys]
-    chain = reformat.build_filter(info, width, height, mode, "0:v", "v0", keys)
+    chain = reformat.build_filter(info, width, height, mode, "0:v", "v0", keys, opts=style_opts)
     graph = f"{chain};[v0]fps={fps},format=yuv420p[v]"
     args: list = []
     if start is not None:
