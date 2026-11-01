@@ -36,6 +36,18 @@ export class Preview {
   }
 
   get p() { return this.app.project; }
+
+  // Let go of every media file (used before a project is deleted).
+  unload() {
+    this.playing = false;
+    const drop = (v) => { v.pause(); v.removeAttribute('src'); v.dataset.url = ''; v.load(); };
+    this.videos.forEach(drop);
+    for (const el of this.pips.values()) { drop(el.firstChild); el.remove(); }
+    for (const el of this.audios.values()) drop(el);
+    this.pips.clear(); this.audios.clear();
+    this.layer.innerHTML = '';
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+  }
   get meta() { return this.app.meta; }
 
   size() {

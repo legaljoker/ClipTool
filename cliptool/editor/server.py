@@ -430,7 +430,13 @@ class Handler(BaseHTTPRequestHandler):
             f = RESOURCE_ROOT / "CHANGELOG.md"
             return self.send_json({"text": f.read_text(encoding="utf-8") if f.exists() else "", "version": __version__})
         if parts == ["meta"]:
-            return self.send_json({**meta(), "version": __version__})
+            return self.send_json({**meta(), "version": __version__, "uitest": bool(os.environ.get("CLIPTOOL_UITEST"))})
+        if parts == ["uitest"] and method == "POST" and os.environ.get("CLIPTOOL_UITEST"):
+            # automated typing test of the Windows build: the page reports what it sees
+            out = app.cfg.resolve_dir("log_dir") / "uitest.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(self.read_json()), encoding="utf-8")
+            return self.send_json({"ok": True})
         if parts == ["input-files"]:
             folder = app.cfg.resolve_dir("input_dir")
             folder.mkdir(parents=True, exist_ok=True)
@@ -464,8 +470,16 @@ class Handler(BaseHTTPRequestHandler):
                         saved = store.save(pid, normalize(self.read_json()))
                     return self.send_json({"ok": True, "duration": total_duration(saved)})
                 if method == "DELETE":
-                    shutil.rmtree(store.dir(pid), ignore_errors=True)
+                    with app.lock(pid):
+                        try:
+                            store.delete(pid)
+                        except PermissionError as exc:
+                            raise ValueError("a file in this project is still in use; close it and try again") from exc
                     return self.send_json({"ok": True})
+            if rest == ["rename"] and method == "POST":
+                with app.lock(pid):
+                    saved = store.rename(pid, self.read_json().get("name", ""))
+                return self.send_json({"ok": True, "name": saved["name"]})
             if rest == ["media"] and method == "POST":
                 name = Path(q.get("name") or "upload.mp4").name
                 if Path(name).suffix.lower() not in VIDEO_EXTENSIONS | AUDIO_EXTENSIONS:

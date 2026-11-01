@@ -196,6 +196,9 @@ h4 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spac
 .modal-card img.frame { max-height: 72vh; max-width: 100%; display: block; margin: 8px auto; border-radius: 6px; }
 .proj-list { display: grid; gap: 6px; margin: 10px 0; max-height: 50vh; overflow: auto; }
 .proj-list button { text-align: left; }
+.proj-row { display: flex; gap: 6px; align-items: center; }
+.proj-row .proj-open { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-row.confirm { background: #3a1f25; border: 1px solid #6b2d36; border-radius: 6px; padding: 6px 8px; }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 60; }
 .toast { background: #262a3a; border: 1px solid var(--line); border-left: 4px solid var(--accent2); padding: 9px 12px;
   border-radius: 6px; max-width: 360px; box-shadow: 0 6px 20px rgba(0,0,0,.4); }

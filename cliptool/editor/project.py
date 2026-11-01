@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -261,6 +262,23 @@ class ProjectStore:
         proj = new_project(name)
         self.save(pid, proj)
         return pid, proj
+
+    def rename(self, pid: str, name: str) -> dict:
+        name = (name or "").strip()[:120]
+        if not name:
+            raise ValueError("the name can't be empty")
+        proj = self.load(pid)
+        proj["name"] = name
+        return self.save(pid, proj)
+
+    def delete(self, pid: str) -> None:
+        d = self.dir(pid)
+        if not (d / "project.json").is_file():
+            raise FileNotFoundError("no such project")
+        # Move the folder aside first so a half-deleted project never shows up in the list.
+        trash = self.root / f".deleted_{pid}_{datetime.now().strftime('%H%M%S%f')}"
+        d.rename(trash)
+        shutil.rmtree(trash, ignore_errors=True)
 
     def load(self, pid: str) -> dict:
         f = self.dir(pid) / "project.json"

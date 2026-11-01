@@ -66,15 +66,32 @@ class App {
     const list = await api('GET', '/api/projects');
     if (want && list.some(p => p.id === want)) await this.openProject(want);
     else this.showProjects(list);
+    if (this.meta.uitest) this.uiTestReporter();
+  }
+
+  // Only for the automated typing test of the Windows build (CLIPTOOL_UITEST=1).
+  uiTestReporter() {
+    setInterval(() => {
+      const el = $('#new-name');
+      const r = el?.getBoundingClientRect();
+      api('POST', '/api/uitest', {
+        value: el?.value ?? null, active: document.activeElement?.id || document.activeElement?.tagName,
+        hasFocus: document.hasFocus(), dpr: devicePixelRatio, innerWidth, innerHeight,
+        rect: r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null,
+      }).catch(() => {});
+    }, 400);
   }
 
   // ---- projects -------------------------------------------------------------
   showProjects(list) {
-    const items = list.map(p => `<button class="btn" data-open="${esc(p.id)}"><b>${esc(p.name)}</b>
-      <span class="muted"> · ${p.clips} clip${p.clips === 1 ? '' : 's'} · ${esc(p.modified.replace('T', ' '))}</span></button>`).join('');
+    const items = list.map(p => `<div class="proj-row" data-row="${esc(p.id)}">
+        <button class="btn proj-open" data-open="${esc(p.id)}"><b>${esc(p.name)}</b>
+          <span class="muted"> · ${p.clips} clip${p.clips === 1 ? '' : 's'} · ${esc(p.modified.replace('T', ' '))}</span></button>
+        <button class="btn icon" data-rename="${esc(p.id)}" title="Rename">✏️</button>
+        <button class="btn icon danger" data-delete="${esc(p.id)}" title="Delete">🗑</button></div>`).join('');
     this.modal(`<h3>ClipTool Editor</h3>
-      <div class="field"><label>Start a new video</label>
-        <div class="row"><input type="text" id="new-name" placeholder="Name, e.g. Golf funny moments" style="flex:1">
+      <div class="field"><label for="new-name">Start a new video</label>
+        <div class="row"><input type="text" id="new-name" placeholder="Name, e.g. Golf funny moments" style="flex:1" autofocus>
         <button class="btn primary" id="new-go">Create</button></div></div>
       ${list.length ? `<h4>Or open a project</h4><div class="proj-list">${items}</div>` : ''}
       ${this.project ? '<div class="row"><div class="spacer"></div><button class="btn" data-close>Cancel</button></div>' : ''}`);
@@ -87,7 +104,51 @@ class App {
     $('#new-go').onclick = go;
     $('#new-name').onkeydown = (e) => e.key === 'Enter' && go();
     $('#new-name').focus();
+    const byId = (id) => list.find(p => p.id === id);
     $$('[data-open]').forEach(b => b.onclick = async () => { this.closeModal(); await this.openProject(b.dataset.open); });
+    $$('[data-rename]').forEach(b => b.onclick = () => {
+      const id = b.dataset.rename, row = $(`[data-row="${CSS.escape(id)}"]`);
+      row.innerHTML = `<input type="text" class="proj-rename" value="${esc(byId(id).name)}" style="flex:1">
+        <button class="btn primary small" data-save>Save</button><button class="btn small" data-cancel>Cancel</button>`;
+      const input = $('input', row);
+      input.focus(); input.select();
+      const save = async () => {
+        const name = input.value.trim();
+        if (!name) return this.toast('Type a name first.');
+        await api('POST', `/api/projects/${encodeURIComponent(id)}/rename`, { name });
+        if (id === this.pid) { this.project.name = name; $('#project-name').value = name; }
+        this.showProjects(await api('GET', '/api/projects'));
+      };
+      $('[data-save]', row).onclick = save;
+      input.onkeydown = (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') this.showProjects(list); };
+      $('[data-cancel]', row).onclick = () => this.showProjects(list);
+    });
+    $$('[data-delete]').forEach(b => b.onclick = () => {
+      const id = b.dataset.delete, row = $(`[data-row="${CSS.escape(id)}"]`);
+      row.classList.add('confirm');
+      row.innerHTML = `<span style="flex:1">Delete <b>${esc(byId(id).name)}</b> and all its files (videos, recordings, exports)? This can't be undone.</span>
+        <button class="btn small danger" data-yes>Delete</button><button class="btn small" data-no>Keep</button>`;
+      $('[data-no]', row).onclick = () => this.showProjects(list);
+      $('[data-yes]', row).onclick = async () => {
+        if (id === this.pid) this.closeProject();
+        try {
+          await api('DELETE', `/api/projects/${encodeURIComponent(id)}`);
+          this.toast('Project deleted.');
+        } catch (e) { this.toast(e.message, true); }
+        this.showProjects(await api('GET', '/api/projects'));
+      };
+    });
+  }
+
+  closeProject() {
+    clearTimeout(this.saveTimer);
+    this.project = null;
+    this.pid = null;
+    this.selection = null;
+    this.history = new History();
+    this.preview.unload?.();
+    $('#project-name').value = '';
+    history.replaceState(null, '', location.pathname);
   }
 
   async openProject(pid) {

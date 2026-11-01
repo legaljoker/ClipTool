@@ -63,6 +63,22 @@ jobs:
           Get-Content "$env:CLIPTOOL_HOME\logs\selftest.log"
           if ($p.ExitCode -ne 0) { Write-Error "Self-test failed"; exit 1 }
 
+      - name: Typing test with the focus fix turned off (shows the old bug)
+        continue-on-error: true
+        run: .\packaging\uitest.ps1 -NoFix -Name nofix
+
+      - name: Typing test of the real program window
+        continue-on-error: true
+        run: .\packaging\uitest.ps1 -Name fixed
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: uitest-screenshots
+          path: uitest_shots/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Build the installer
         run: |
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress | Out-Null }

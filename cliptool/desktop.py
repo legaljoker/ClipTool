@@ -51,6 +51,26 @@ def setup_environment() -> Path:
     return home
 
 
+def focus_page(win, log) -> None:
+    """Give keyboard focus to the web page inside the window (Windows / WebView2)."""
+    if os.name != "nt":
+        return
+    try:
+        from System import Action  # pythonnet, bundled with pywebview on Windows
+
+        form = win.native
+
+        def activate():
+            form.Activate()
+            view = getattr(form, "webview", None) or getattr(getattr(form, "browser", None), "webview", None)
+            if view is not None:
+                view.Focus()
+
+        form.Invoke(Action(activate))
+    except Exception as exc:
+        log.debug("could not focus the page: %s", exc)
+
+
 def message_box(text: str, title: str = "ClipTool Editor") -> None:
     if os.name == "nt":
         import ctypes
@@ -87,8 +107,25 @@ def main(argv: list[str] | None = None) -> int:
         import webview
 
         webview.settings["ALLOW_DOWNLOADS"] = True
-        webview.create_window("ClipTool Editor", url, width=1500, height=950, min_size=(1100, 680),
-                              maximized=True, background_color="#12131a", text_select=True)
+        # Not maximized at creation: WebView2 starts asynchronously, and a window that opens
+        # maximized could show the page without ever giving it keyboard focus (typing did
+        # nothing until the window was re-focused). Maximize and focus once the page is loaded.
+        win = webview.create_window("ClipTool Editor", url, width=1500, height=950, min_size=(1100, 680),
+                                    background_color="#12131a", text_select=True)
+        if not os.environ.get("CLIPTOOL_NO_FOCUS_FIX"):
+            focused = []
+
+            def on_loaded():
+                if focused:
+                    return
+                focused.append(True)
+                try:
+                    win.maximize()
+                except Exception as exc:
+                    log.debug("maximize failed: %s", exc)
+                focus_page(win, log)
+
+            win.events.loaded += on_loaded
         icon = resource_dir() / "packaging" / "cliptool.ico"
         webview.start(private_mode=False, storage_path=str(home / "webview"),
                       icon=str(icon) if icon.exists() else None)
