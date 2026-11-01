@@ -12,8 +12,9 @@ from cliptool import reformat
 from cliptool.editor import textfx
 from cliptool.avatars import ImageCache, _talk_frames, _write_concat
 from cliptool.captions import _inline_color, ass_escape, ass_time, group_words, hex_to_ass
-from cliptool.editor.project import (CANVAS_PRESETS, CHROMA_COLORS, EFFECTS, ProjectStore, clip_length, clip_starts, find,
-                                     media_path, total_duration, transition_duration)
+from cliptool.editor.project import (AUDIO_EFFECTS, CANVAS_PRESETS, CHROMA_COLORS, EFFECTS, ProjectStore,
+                                     clip_length, clip_starts, find, media_path, total_duration,
+                                     transition_duration)
 from cliptool.emotions import FALLBACKS
 from cliptool.export import PLATFORMS
 from cliptool.ffmpeg_utils import MediaInfo, ffmpeg_bin, filter_script_args
@@ -325,42 +326,96 @@ def build_plan(p: dict, store: ProjectStore, pid: str, work: Path, audio: bool =
         n_in += 1
         return n_in - 1
 
-    seq_v = seq_a = None
+    # Pieces of one take that follow each other without a transition (e.g. after cutting out
+    # pauses) form a "run": the file is decoded once and only the kept frames are selected.
+    # This keeps memory low even with hundreds of cuts.
+    runs: list[list[int]] = []
     for i, c in enumerate(clips):
-        m = media_by_id[c["media"]]
+        prev = clips[runs[-1][-1]] if runs else None
+        if prev and transition_duration(clips, i) == 0 and prev["media"] == c["media"] \
+                and _num(c["in"]) >= _num(prev["out"]) - 0.001 and len(runs[-1]) < 400:
+            runs[-1].append(i)
+        else:
+            runs.append([i])
+
+    seq_v = None
+    for r, run in enumerate(runs):
+        first = clips[run[0]]
+        m = media_by_id[first["media"]]
         src = media_path(store, pid, m)
         if not src.exists():
             raise RenderError(f"Video file is missing: {src}")
-        L = clip_length(c)
-        idx = add_input(["-ss", f"{_num(c['in']):.3f}", "-t", f"{L:.3f}", "-i", src])
+        lo = min(_num(clips[i]["in"]) for i in run)
+        hi = max(_num(clips[i]["out"]) for i in run)
+        L = sum(clip_length(clips[i]) for i in run)
+        idx = add_input(["-ss", f"{lo:.3f}", "-t", f"{hi - lo + 0.1:.3f}", "-an", "-i", src])
+        if len(run) == 1:
+            graph.append(f"[{idx}:v]setpts=PTS-STARTPTS[r{r}]")
+        else:
+            keep = "+".join(f"between(t,{_num(clips[i]['in']) - lo:.4f},{_num(clips[i]['out']) - lo - 0.0005:.4f})"
+                            for i in run)
+            # new time = time in the file minus everything skipped before it
+            shift, removed, pos = [], 0.0, None
+            for i in run:
+                a_i = _num(clips[i]["in"]) - lo
+                if pos is not None:
+                    removed = a_i - pos
+                    shift.append(f"{removed:.4f}*gte(T,{a_i - 0.0005:.4f})" if removed else "")
+                else:
+                    shift.append(f"{a_i:.4f}")
+                pos = _num(clips[i]["out"]) - lo
+            # gaps add up: each term removes the gap before piece k once T passes it
+            expr = "T-(" + "+".join(x for x in shift if x) + ")"
+            graph.append(f"[{idx}:v]setpts=PTS-STARTPTS,select='{keep}',setpts='({expr})/TB'[r{r}]")
         info = MediaInfo(src, L, int(m.get("width") or W), int(m.get("height") or H), FPS,
                          bool(m.get("has_audio", True)), True)
-        graph.append(f"[{idx}:v]setpts=PTS-STARTPTS[r{i}]")
-        graph.append(reformat.build_filter(info, W, H, style, f"r{i}", f"f{i}", None,
+        graph.append(reformat.build_filter(info, W, H, style, f"r{r}", f"f{r}", None,
                                            int(_num(fr.get("blur"), 20)), style_opts))
-        graph.append(f"[f{i}]fps={FPS},format=yuv420p,setsar=1,tpad=stop_mode=clone:stop_duration=2,"
-                     f"trim=duration={L:.3f},setpts=PTS-STARTPTS,settb=AVTB[v{i}]")
-        if audio:
-            aidx = idx if m.get("has_audio", True) else \
-                add_input(["-f", "lavfi", "-t", f"{L:.3f}", "-i", "anullsrc=r=48000:cl=stereo"])
-            vol = max(0.0, min(4.0, _num(c.get("volume"), 1.0)))
-            graph.append(f"[{aidx}:a]asetpts=PTS-STARTPTS,aresample=48000,"
-                         f"aformat=sample_fmts=fltp:channel_layouts=stereo,volume={vol:.2f},"
-                         f"apad=whole_dur={L:.3f},atrim=duration={L:.3f}[a{i}]")
+        graph.append(f"[f{r}]fps={FPS},format=yuv420p,setsar=1,tpad=stop_mode=clone:stop_duration=1,"
+                     f"trim=duration={L:.3f},setpts=PTS-STARTPTS,settb=AVTB[v{r}]")
         if seq_v is None:
-            seq_v, seq_a = f"v{i}", f"a{i}"
+            seq_v = f"v{r}"
             continue
+        i = run[0]
         d = transition_duration(clips, i)
         if d > 0:
-            t = c["transition"]["type"]
-            graph.append(f"[{seq_v}][v{i}]xfade=transition={t}:duration={d:.3f}:offset={starts[i]:.3f}[sv{i}]")
-            if audio:
-                graph.append(f"[{seq_a}][a{i}]acrossfade=d={d:.3f}[sa{i}]")
-        elif audio:
-            graph.append(f"[{seq_v}][{seq_a}][v{i}][a{i}]concat=n=2:v=1:a=1[sv{i}][sa{i}]")
+            t = clips[i]["transition"]["type"]
+            graph.append(f"[{seq_v}][v{r}]xfade=transition={t}:duration={d:.3f}:offset={starts[i]:.3f}[sv{r}]")
         else:
-            graph.append(f"[{seq_v}][v{i}]concat=n=2:v=1:a=0[sv{i}]")
-        seq_v, seq_a = f"sv{i}", f"sa{i}"
+            graph.append(f"[{seq_v}][v{r}]concat=n=2:v=1:a=0[sv{r}]")
+        seq_v = f"sv{r}"
+
+    seq_a = None
+    if audio:  # sound: one short input per piece (cheap), joined with tiny fades so cuts don't click
+        for i, c in enumerate(clips):
+            m = media_by_id[c["media"]]
+            L = clip_length(c)
+            if m.get("has_audio", True):
+                aidx = add_input(["-ss", f"{_num(c['in']):.3f}", "-t", f"{L:.3f}", "-vn", "-i", media_path(store, pid, m)])
+            else:
+                aidx = add_input(["-f", "lavfi", "-t", f"{L:.3f}", "-i", "anullsrc=r=48000:cl=stereo"])
+            vol = max(0.0, min(4.0, _num(c.get("volume"), 1.0)))
+            declick = f",afade=t=in:d=0.01,afade=t=out:st={L - 0.01:.3f}:d=0.01" if L > 0.1 else ""
+            graph.append(f"[{aidx}:a]asetpts=PTS-STARTPTS,aresample=48000,"
+                         f"aformat=sample_fmts=fltp:channel_layouts=stereo,volume={vol:.2f},"
+                         f"apad=whole_dur={L:.3f},atrim=duration={L:.3f}{declick}[a{i}]")
+        pending: list[str] = []  # pieces joined with plain concat, flushed before a crossfade
+
+        def flush(label: str) -> str:
+            if len(pending) == 1:
+                return pending[0]
+            graph.append("".join(f"[{x}]" for x in pending) + f"concat=n={len(pending)}:v=0:a=1[{label}]")
+            return label
+
+        for i in range(len(clips)):
+            d = transition_duration(clips, i)
+            if i and d > 0:
+                left = flush(f"ac{i}")
+                graph.append(f"[{left}][a{i}]acrossfade=d={d:.3f}[ax{i}]")
+                pending = [f"ax{i}"]
+            else:
+                pending.append(f"a{i}")
+        seq_a = flush("aseq")
 
     cur = seq_v
     fx = effects_chain(p["effects"], W, H)
@@ -396,7 +451,19 @@ def build_plan(p: dict, store: ProjectStore, pid: str, work: Path, audio: bool =
                      f"enable='between(t,{a:.3f},{b:.3f})':eof_action=pass:format=auto[ov{j}]")
         cur = f"ov{j}"
 
+    ducked: list[str] = []  # music that dips under the voice
     if audio:
+        mutes = [e for e in p["effects"] if e.get("type") in AUDIO_EFFECTS and _num(e.get("end")) > _num(e.get("start"))]
+        if mutes:
+            off = ",".join(f"volume=0:enable='between(t,{_num(e['start']):.3f},{_num(e['end']):.3f})'" for e in mutes)
+            graph.append(f"[{seq_a}]{off}[muted]")
+            seq_a = "muted"
+        for j, e in enumerate(x for x in mutes if x["type"] == "bleep"):
+            a, b = _num(e["start"]), _num(e["end"])
+            f = max(200, min(4000, int(_num((e.get("params") or {}).get("tone"), 1000))))
+            k = add_input(["-f", "lavfi", "-i", f"sine=frequency={f}:sample_rate=48000:duration={b - a:.3f}"])
+            graph.append(audio_chain(f"{k}:a", 0.3, a, 0.005, 0.005, f"blp{j}", b - a))
+            extra_audio.append(f"blp{j}")
         for j, it in enumerate(p.get("audio", [])):
             m = media_by_id.get(it["media"])
             if not m or not media_path(store, pid, m).exists():
@@ -405,7 +472,15 @@ def build_plan(p: dict, store: ProjectStore, pid: str, work: Path, audio: bool =
             k = add_input(["-ss", f"{_num(it['in']):.3f}", "-t", f"{L:.3f}", "-i", media_path(store, pid, m)])
             graph.append(audio_chain(f"{k}:a", max(0.0, min(4.0, _num(it.get("volume"), 1.0))), _num(it["start"]),
                                      _num(it.get("fade_in")), _num(it.get("fade_out")), f"aud{j}", L))
-            extra_audio.append(f"aud{j}")
+            (ducked if it.get("duck") else extra_audio).append(f"aud{j}")
+        if ducked:
+            outs = "".join(f"[sc{j}]" for j in range(len(ducked)))
+            graph.append(f"[{seq_a}]asplit={len(ducked) + 1}[voice]{outs}")
+            seq_a = "voice"
+            for j, lab in enumerate(ducked):
+                graph.append(f"[{lab}][sc{j}]sidechaincompress=threshold=0.015:ratio=8:attack=20:release=400:"
+                             f"makeup=1[{lab}d]")
+                extra_audio.append(f"{lab}d")
 
     track = build_avatar_track(p, store, pid, work)
     if track:
@@ -424,7 +499,8 @@ def build_plan(p: dict, store: ProjectStore, pid: str, work: Path, audio: bool =
         graph.append(f"[{cur}]ass=captions.ass:fontsdir=fonts[cap]")
         cur = "cap"
 
-    graph.append(f"[{cur}]fps={FPS},format=yuv420p[vout]")
+    # (every piece is already 30 fps; a final fps filter here never ends after zoompan on some ffmpeg versions)
+    graph.append(f"[{cur}]format=yuv420p[vout]")
     maps = ["-map", "[vout]"]
     if audio:
         if extra_audio:

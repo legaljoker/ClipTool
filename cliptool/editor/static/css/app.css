@@ -193,6 +193,7 @@ h4 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spac
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: grid; place-items: center; z-index: 50; }
 .modal-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px;
   max-width: min(720px, 94vw); max-height: 92vh; overflow: auto; min-width: 360px; }
+.modal-card.wide { max-width: min(1040px, 96vw); width: 1040px; }
 .modal-card img.frame { max-height: 72vh; max-width: 100%; display: block; margin: 8px auto; border-radius: 6px; }
 .proj-list { display: grid; gap: 6px; margin: 10px 0; max-height: 50vh; overflow: auto; }
 .proj-list button { text-align: left; }
@@ -255,3 +256,13 @@ kbd { background: #11131b; border: 1px solid var(--line); border-radius: 4px; pa
 .frame-box.drop-hover .overlay-layer, .frame-box.drop-hover .overlay-layer * { pointer-events: none; }
 .drag-chip { position: fixed; top: -100px; left: -100px; background: var(--accent); color: #fff; font-weight: 600;
   padding: 4px 10px; border-radius: 14px; font-size: 12px; white-space: nowrap; }
+
+/* settings */
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.settings-grid h4 { margin: 4px 0 6px; }
+.key-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; background: var(--panel2); }
+.key-state { font-size: 12px; color: var(--muted); }
+.key-state.ok { color: #6fdc8c; }
+.key-msg a { color: var(--accent); }
+label.check { display: flex; gap: 8px; align-items: center; margin: 5px 0; cursor: pointer; }
+@media (max-width: 900px) { .settings-grid { grid-template-columns: 1fr; } }

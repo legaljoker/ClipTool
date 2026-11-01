@@ -17,6 +17,7 @@
   <button class="btn ghost icon" id="btn-undo" title="Undo (Ctrl+Z)">↶</button>
   <button class="btn ghost icon" id="btn-redo" title="Redo (Ctrl+Y)">↷</button>
   <span id="save-state" class="muted"></span>
+  <button class="btn ghost" id="btn-settings" title="API keys, speech-to-text and Auto Edit defaults">⚙️ Settings</button>
   <button class="btn ghost" id="btn-whatsnew" title="Change log: every update made to ClipTool">📜 What's new</button>
   <button class="btn" id="btn-exact" title="Render this exact frame with ffmpeg, exactly as the final video will look">🔍 Exact preview</button>
   <div id="render-progress" class="progress hidden"><div class="bar-fill"></div><span></span><button class="link" id="btn-cancel-render">Cancel</button></div>
@@ -26,6 +27,8 @@
 <main class="workspace">
   <nav class="tabs" id="tabs">
     <button data-tab="media" class="active"><b>🎬</b>Media</button>
+    <button data-tab="auto"><b>🪄</b>Auto Edit</button>
+    <button data-tab="ai"><b>🤖</b>AI Editor</button>
     <button data-tab="record"><b>🎙</b>Record</button>
     <button data-tab="captions"><b>💬</b>Captions</button>
     <button data-tab="people"><b>🙂</b>People</button>

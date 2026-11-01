@@ -20,7 +20,8 @@ if os.path.isdir(ffmpeg_dir):
     datas.append((ffmpeg_dir, "ffmpeg"))
 
 binaries, hiddenimports = [], ["cliptool.editor.server", "cliptool.selftest", "cliptool.desktop"]
-for pkg in ("faster_whisper", "ctranslate2", "onnxruntime", "tokenizers", "av", "huggingface_hub", "webview"):
+for pkg in ("faster_whisper", "ctranslate2", "onnxruntime", "tokenizers", "av", "huggingface_hub", "webview",
+            "anthropic"):
     try:
         d, b, h = collect_all(pkg)
     except Exception as exc:  # optional on some platforms

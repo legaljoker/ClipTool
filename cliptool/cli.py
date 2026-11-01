@@ -135,6 +135,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Could not read the config file: {exc}")
         return 2
     setup_logging(cfg.resolve_dir("log_dir"), args.verbose)
+    from cliptool import settings
+    settings.apply_env()  # API keys saved in the editor's Settings window
+    settings.apply_to_config(cfg)
 
     if args.command in (None, "menu"):
         from cliptool.menu import run_menu

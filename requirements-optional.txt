@@ -1,5 +1,5 @@
 # Optional extras - install only what you want:
-anthropic>=0.70          # Claude AI for smarter clip picks + titles (needs ANTHROPIC_API_KEY)
+# (anthropic is now a core requirement)
 pyannote.audio>=3.1      # high-accuracy speaker identification (needs a Hugging Face token)
 transformers>=4.40       # AI expression detection from text
 torch                    # needed by pyannote.audio and transformers

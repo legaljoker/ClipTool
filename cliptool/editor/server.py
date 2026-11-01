@@ -1,6 +1,7 @@
 """Local web server for the ClipTool editor (opens in your browser, only reachable from this PC)."""
 from __future__ import annotations
 
+import copy
 import json
 import mimetypes
 import os
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
-from cliptool import __version__
+from cliptool import __version__, settings
 from cliptool.config import Config
 from cliptool.editor import render
 from cliptool.editor.project import (ProjectStore, clip_starts, find, media_path, meta, new_id, normalize,
@@ -243,12 +244,241 @@ class EditorApp:
         job.message = f"Added {len(captions)} captions."
         return {"captions": len(captions), "people": len(speaker_ids)}
 
+    # ---- Auto Edit -------------------------------------------------------
+    def media_analysis(self, p: dict, pid: str, job: Job, envelopes: bool = True) -> tuple[dict, dict]:
+        """Speech-to-text (cached) and loudness for every video used on the timeline."""
+        from cliptool.editor.autoedit import Envelope
+        from cliptool.ffmpeg_utils import decode_audio
+        from cliptool.transcribe import transcribe
+
+        cache = self.cfg.resolve_dir("output_dir") / ".transcript_cache"
+        media = {m["id"]: m for m in p["media"]}
+        used = [mid for mid in dict.fromkeys(c["media"] for c in p["clips"]) if media[mid].get("has_audio", True)]
+        trs, envs = {}, {}
+        for n, mid in enumerate(used):
+            if job.cancel.is_set():
+                raise RuntimeError("Cancelled")
+            src = media_path(self.store, pid, media[mid])
+            job.message = f"Listening to {media[mid]['name']} ({n + 1} of {len(used)})..."
+            job.progress = 0.05 + 0.5 * n / max(1, len(used))
+            trs[mid] = transcribe(src, self.cfg["transcription"], cache)
+            if envelopes:
+                envs[mid] = Envelope.from_samples(decode_audio(src))
+        return trs, envs
+
+    def auto_edit(self, pid: str, opts: dict, job: Job) -> dict:
+        from cliptool import ai
+        from cliptool.editor import autoedit as ae
+        from cliptool.editor import sfx
+
+        pr = settings.prefs()
+        o = {"tighten": True, "fillers": pr["remove_fillers"], "restarts": pr["remove_restarts"],
+             "keep_pause": pr["tighten_keep_pause"], "min_gap": pr["tighten_min_gap"], "captions": True,
+             "speakers": False, "punch_ins": pr["punch_ins"], "emphasis": True, "hook_title": True,
+             "hook_text": "", "callouts": True, "bleep": pr["bleep_swears"], "cold_open": False, "sfx": True,
+             "music": "", "use_ai": True, **opts}
+        p = self.store.load(pid)
+        if not p["clips"]:
+            raise ValueError("Add a video to the timeline first.")
+        report: list[str] = []
+        before = total_duration(p)
+        if o["tighten"]:
+            trs, envs = self.media_analysis(p, pid, job)
+            job.message, job.progress = "Cutting pauses and filler words...", 0.6
+            p, st = ae.tighten(p, trs, envs, o)
+            parts = [f"{st['pause'] + st['start'] + st['end']} pauses"]
+            if o["fillers"]:
+                parts.append(f"{st['filler']} um/uh")
+            if o["restarts"]:
+                parts.append(f"{st['restart']} repeats/false starts")
+            report.append(f"✂️ Tightened: removed {st['seconds']:.1f}s ({', '.join(parts)}). "
+                          f"{st['before']:.1f}s → {st['after']:.1f}s.")
+        with self.lock(pid):
+            self.store.save(pid, p)
+        if o["captions"] and not p["captions"]:
+            job.message, job.progress = "Writing captions...", 0.7
+            res = self.transcribe(pid, {"speakers": o["speakers"], "expressions": True}, job)
+            report.append(f"💬 Added {res['captions']} captions.")
+            p = self.store.load(pid)
+        plan = None
+        if o["use_ai"] and ai.ai_available() and p["captions"] and (o["hook_title"] or o["emphasis"] or o["cold_open"]):
+            job.message, job.progress = "Claude is planning the edit...", 0.8
+            plan = ae.claude_plan(p, self.cfg["ai"], bool(o["cold_open"]))
+            if plan:
+                report.append("🤖 Claude planned the title, zooms and callouts." +
+                              (f" {plan.get('notes', '')}" if plan.get("notes") else ""))
+        job.message, job.progress = "Adding zooms, titles and sounds...", 0.9
+        if o["punch_ins"]:
+            n = ae.punch_ins(p)
+            if n:
+                report.append(f"🔍 {n} punch-in zooms hide the jump cuts.")
+        if o["emphasis"]:
+            n = ae.emphasis(p, picks=(plan or {}).get("emphasis_times") if plan else None)
+            if n:
+                report.append(f"💥 {n} zoom punches on strong words.")
+        added_callouts = []
+        if o["callouts"]:
+            added_callouts = ae.callouts(p)
+            for c in (plan or {}).get("callouts", [])[:4]:
+                t = float(c.get("time", 0))
+                if any(abs(x["start"] - t) < 3 for x in added_callouts):
+                    continue
+                item = {"id": new_id("o"), "type": "text", "style": "highlighter", "text": str(c["text"])[:40],
+                        "x": 0.5, "y": 0.36, "size": 70, "anim_in": "pop", "anim_out": "fade", "anim_dur": 0.3,
+                        "start": round(t, 3), "end": round(t + 2.5, 3), "auto": "callout"}
+                p["overlays"].append(item)
+                added_callouts.append(item)
+            if added_callouts:
+                report.append(f"📣 {len(added_callouts)} call-out texts: " +
+                              ", ".join(x["text"] for x in added_callouts) + ".")
+        if o["bleep"]:
+            n = ae.bleeps(p)
+            report.append(f"🙊 Bleeped {n} swear words." if n else "🙊 No swear words found.")
+        cold = None
+        if o["cold_open"]:
+            rng = (plan or {}).get("cold_open") or {}
+            cold = ae.cold_open(p, rng.get("start"), rng.get("end"))
+            report.append(f"⏪ Cold open: the moment at {cold[0]:.1f}-{cold[1]:.1f}s now also plays first."
+                          if cold else "⏪ No strong moment found for a cold open.")
+        title = None
+        if o["hook_title"]:
+            text = o["hook_text"] or (plan or {}).get("hook_title") or None
+            title = ae.hook_title(p, text, (plan or {}).get("hook_subtitle", "") if not o["hook_text"] else "")
+            if title:
+                report.append(f"🏷️ Hook title: \"{title['text']}\".")
+        if o["sfx"]:
+            p["audio"] = [a for a in p["audio"] if a.get("auto") != "sfx"]
+            n = 0
+            if title:
+                sfx.add_sound(p, self.store, pid, "whoosh", 0.05, 0.45, "sfx", anchor="start")
+                n += 1
+            if cold:
+                starts = clip_starts(p["clips"])
+                idx = next((i for i, c in enumerate(p["clips"]) if not c.get("cold_open")), None)
+                if idx:
+                    sfx.add_sound(p, self.store, pid, "whoosh", starts[idx], 0.5, "sfx", anchor="peak")
+                    n += 1
+            for c in added_callouts:
+                sfx.add_sound(p, self.store, pid, "pop", c["start"], 0.5, "sfx")
+                n += 1
+            for e in p["effects"]:
+                if e.get("auto") == "emphasis":
+                    sfx.add_sound(p, self.store, pid, "swoosh_fast", e["start"], 0.25, "sfx")
+                    n += 1
+            if n:
+                report.append(f"🔊 {n} sound effects on the title, zooms and call-outs.")
+        if o["music"]:
+            m = find(p["media"], o["music"])
+            if m:
+                total = total_duration(p)
+                p["audio"] = [a for a in p["audio"] if a.get("auto") != "music"]
+                length = min(float(m["duration"]), total)
+                p["audio"].append({"id": new_id("a"), "media": m["id"], "name": m["name"], "in": 0.0, "out": length,
+                                   "start": 0.0, "end": length, "volume": pr["music_volume"], "fade_in": 0.5,
+                                   "fade_out": 1.5, "duck": True, "auto": "music"})
+                report.append("🎵 Background music added; it dips automatically while someone talks.")
+        with self.lock(pid):
+            self.store.save(pid, p)
+        after = total_duration(self.store.load(pid))
+        report.append(f"Length: {before:.1f}s → {after:.1f}s.")
+        (self.store.dir(pid) / "auto_edit_report.txt").write_text(
+            "ClipTool Auto Edit - " + datetime.now().strftime("%Y-%m-%d %H:%M") + "\n\n" + "\n".join(report) + "\n",
+            encoding="utf-8")
+        job.message = "Auto Edit finished."
+        return {"report": report, "plan": plan}
+
+    def generate_sound(self, pid: str, opts: dict, job: Job) -> dict:
+        from cliptool.editor import sfx
+        kind = "music" if opts.get("kind") == "music" else "sfx"
+        job.message = "Composing music (this can take a minute)..." if kind == "music" else "Creating the sound..."
+        f = sfx.generate(kind, opts.get("prompt", ""), float(opts.get("seconds") or (30 if kind == "music" else 2)),
+                         self.store.dir(pid) / "media")
+        entry = self.add_media(pid, f, f"media/{f.name}")
+        return {"media": entry}
+
+    # ---- checks and versions ---------------------------------------------
+    def export_path(self, pid: str, p: dict, suffix: str = "") -> Path:
+        """File name from the pattern in Settings, e.g. {project}_{preset}_{date}."""
+        pattern = settings.prefs()["export_name_pattern"] or "{project}_{preset}_{date}"
+        now = datetime.now()
+        folder = self.store.dir(pid) / "exports"
+        folder.mkdir(parents=True, exist_ok=True)
+        for n in range(1, 1000):
+            try:
+                name = pattern.format(project=p["name"], preset=p["preset"], date=now.strftime("%Y-%m-%d"),
+                                      time=now.strftime("%H-%M-%S"), n=n)
+            except (KeyError, IndexError, ValueError):
+                name = f"{p['name']}_{p['preset']}_{now.strftime('%Y-%m-%d_%H-%M-%S')}"
+            name = re.sub(r"[^A-Za-z0-9_\-]+", "_", name + suffix).strip("_") or "video"
+            out = folder / f"{name}.mp4"
+            if not out.exists():
+                return out
+            if "{n}" not in pattern:
+                pattern += "_{n}"
+        return folder / f"video_{uuid.uuid4().hex[:6]}.mp4"
+
+    def qa(self, pid: str, job: Job) -> dict:
+        from cliptool.editor import qa
+        p = self.store.load(pid)
+        exports = sorted((self.store.dir(pid) / "exports").glob("*.mp4"), key=lambda f: f.stat().st_mtime)
+        saved = (self.store.dir(pid) / "project.json").stat().st_mtime
+        video = exports[-1] if exports and exports[-1].stat().st_mtime > saved else None
+        if video is None and p["clips"]:
+            job.message = "Making a quick test render..."
+            video = self.store.dir(pid) / "cache" / "qa_check.mp4"
+            work = self.store.dir(pid) / "cache" / f"qa_{job.id}"
+
+            def prog(f: float):
+                job.progress = 0.8 * f
+                job.message = f"Making a quick test render... {int(f * 100)}%"
+            try:
+                render.render_video(p, self.store, pid, video, work, "draft", prog, job.cancel)
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        job.message, job.progress = "Checking picture, sound and captions...", 0.85
+        res = qa.run(p, self.store, pid, video)
+        job.message = f"{len(res['issues'])} things to look at" if res["issues"] else "No problems found"
+        return res
+
+    def hook_versions(self, pid: str, opts: dict, job: Job) -> dict:
+        from cliptool.editor import autoedit as ae
+        p = self.store.load(pid)
+        if not p["captions"]:
+            raise ValueError("Add captions first (Captions tab or Auto Edit): hooks are picked from what is said.")
+        ae.remove_cold_open(p)  # each version gets its own teaser
+        count = max(2, min(6, int(opts.get("count", 3))))
+        length = max(1.5, min(8.0, float(opts.get("length", 3))))
+        cands = ae.hook_candidates(p, count, length)
+        if not cands:
+            raise ValueError("No strong moments found to use as hooks.")
+        files = []
+        for n, (a, b, text, _) in enumerate(cands):
+            if job.cancel.is_set():
+                raise RuntimeError("Cancelled")
+            q = copy.deepcopy(p)
+            ae.cold_open(q, a, b)
+            out = self.export_path(pid, q, f"_hook{n + 1}")
+            work = self.store.dir(pid) / "cache" / f"hook_{job.id}_{n}"
+
+            def prog(f: float, n=n):
+                job.progress = (n + f) / len(cands)
+                job.message = f"Rendering hook version {n + 1} of {len(cands)}... {int(f * 100)}%"
+            try:
+                render.render_video(q, self.store, pid, out, work, opts.get("quality", "high"), prog, job.cancel)
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+            files.append({"name": out.name, "hook": text, "start": a, "end": b})
+        lines = [f"{f['name']}: opens with “{f['hook']}” (from {f['start']:.1f}s)" for f in files]
+        (self.store.dir(pid) / "exports" / "hook_versions.txt").write_text(
+            "Hook versions - post each one and keep the opening that holds viewers longest.\n\n" +
+            "\n".join(lines) + "\n", encoding="utf-8")
+        job.message = f"Made {len(files)} versions."
+        return {"files": files}
+
     # ---- rendering -------------------------------------------------------
     def render(self, pid: str, opts: dict, job: Job) -> dict:
         p = self.store.load(pid)
-        name = re.sub(r"[^A-Za-z0-9_\-]+", "_", p["name"]).strip("_") or "video"
-        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        out = self.store.dir(pid) / "exports" / f"{name}_{p['preset']}_{stamp}.mp4"
+        out = self.export_path(pid, p)
         work = self.store.dir(pid) / "cache" / f"render_{job.id}"
         job.message = "Rendering..."
 
@@ -400,6 +630,10 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         parts = [unquote(x) for x in url.path.strip("/").split("/") if x]
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
+        origin = self.headers.get("Origin")
+        if origin and urlparse(origin).hostname not in ("127.0.0.1", "localhost"):
+            # Only the editor itself may call this server, not other web pages open in a browser.
+            return self.send_error_json(403, "forbidden origin")
         try:
             if method == "GET" and (not parts or parts[0] in ("index.html",)):
                 return self.send_file(STATIC / "index.html")
@@ -430,12 +664,33 @@ class Handler(BaseHTTPRequestHandler):
             f = RESOURCE_ROOT / "CHANGELOG.md"
             return self.send_json({"text": f.read_text(encoding="utf-8") if f.exists() else "", "version": __version__})
         if parts == ["meta"]:
-            return self.send_json({**meta(), "version": __version__, "uitest": bool(os.environ.get("CLIPTOOL_UITEST"))})
+            from cliptool.editor import sfx
+            return self.send_json({**meta(), "version": __version__, "uitest": bool(os.environ.get("CLIPTOOL_UITEST")),
+                                   "sfx": sfx.meta(), "ai": bool(settings.get_key("anthropic")),
+                                   "eleven": bool(settings.get_key("elevenlabs")), "settings": settings.prefs()})
+        if len(parts) == 2 and parts[0] == "sfx" and method == "GET":
+            from cliptool.editor import sfx
+            return self.send_file(sfx.library_file(Path(parts[1]).stem))
         if parts == ["uitest"] and method == "POST" and os.environ.get("CLIPTOOL_UITEST"):
             # automated typing test of the Windows build: the page reports what it sees
             out = app.cfg.resolve_dir("log_dir") / "uitest.json"
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(self.read_json()), encoding="utf-8")
+            return self.send_json({"ok": True})
+        if parts == ["settings"]:
+            if method == "PUT":
+                view = settings.update(self.read_json())
+                settings.apply_to_config(app.cfg)
+                return self.send_json(view)
+            view = settings.public_view()
+            view["data_folder"] = str(_data_folder())
+            return self.send_json(view)
+        if parts == ["settings", "test"] and method == "POST":
+            body = self.read_json()
+            ok, msg = settings.test_key(body.get("service", ""), body.get("key"))
+            return self.send_json({"ok": ok, "message": msg})
+        if parts == ["settings", "open-folder"] and method == "POST":
+            _open_folder(_data_folder())
             return self.send_json({"ok": True})
         if parts == ["input-files"]:
             folder = app.cfg.resolve_dir("input_dir")
@@ -522,6 +777,30 @@ class Handler(BaseHTTPRequestHandler):
                 opts = self.read_json()
                 job = app.jobs.start("transcribe", pid, lambda j: app.transcribe(pid, opts, j))
                 return self.send_json(job.to_dict())
+            if rest == ["autoedit"] and method == "POST":
+                opts = self.read_json()
+                job = app.jobs.start("autoedit", pid, lambda j: app.auto_edit(pid, opts, j))
+                return self.send_json(job.to_dict())
+            if rest == ["generate-sound"] and method == "POST":
+                opts = self.read_json()
+                job = app.jobs.start("generate", pid, lambda j: app.generate_sound(pid, opts, j))
+                return self.send_json(job.to_dict())
+            if rest == ["sfx"] and method == "POST":
+                from cliptool.editor import sfx
+                body = self.read_json()
+                with app.lock(pid):
+                    p = store.load(pid)
+                    item = sfx.add_sound(p, store, pid, body["name"], float(body.get("t", 0)),
+                                         float(body.get("volume", 0.6)))
+                    store.save(pid, p)
+                return self.send_json({"ok": True, "item": item})
+            if rest == ["qa"] and method == "POST":
+                job = app.jobs.start("qa", pid, lambda j: app.qa(pid, j))
+                return self.send_json(job.to_dict())
+            if rest == ["hook-versions"] and method == "POST":
+                opts = self.read_json()
+                job = app.jobs.start("hooks", pid, lambda j: app.hook_versions(pid, opts, j))
+                return self.send_json(job.to_dict())
             if rest == ["render"] and method == "POST":
                 opts = self.read_json()
                 job = app.jobs.start("render", pid, lambda j: app.render(pid, opts, j))
@@ -593,7 +872,13 @@ def _open_folder(folder: Path) -> None:
         log.warning("Could not open folder: %s", exc)
 
 
+def _data_folder() -> Path:
+    return settings.settings_file().parent
+
+
 def make_server(cfg: Config, port: int = 8765) -> ThreadingHTTPServer:
+    settings.apply_env()  # API keys saved in Settings
+    settings.apply_to_config(cfg)
     app = EditorApp(cfg)
     handler = type("BoundHandler", (Handler,), {"app": app})
     for p in [port] + list(range(port + 1, port + 20)):

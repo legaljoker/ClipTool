@@ -5,6 +5,7 @@ import { Timeline } from './timeline.js';
 import { displayText, loadFonts, styleCss, textPx, titleHtml, titleLayout } from './textfx.js';
 import { MAX_SECONDS, Recording, fmtClock, listDevices } from './record.js';
 import { canvasToBlob, drawCartoon, drawPhotoAvatar } from './faces.js';
+import { bindAI, bindAuto, panelAI, panelAuto } from './autopanel.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -57,6 +58,7 @@ class App {
 
   async init() {
     this.meta = await api('GET', '/api/meta');
+    this.settings = this.meta.settings;
     await loadFonts(this.meta.bundled_fonts);
     this.preview = new Preview(this, $('#stage'));
     this.timeline = new Timeline(this, $('#timeline'));
@@ -275,10 +277,13 @@ class App {
     if (this.tab === 'record' && this.rec && el.querySelector('#rec-go')) return;  // don't disturb a live recording
     if (this.tab !== 'record' && this.rec && !this.rec.recording) { this.rec.close(); this.rec = null; }
     const fn = { media: this.panelMedia, record: this.panelRecord, captions: this.panelCaptions, people: this.panelPeople, style: this.panelStyle,
-      effects: this.panelEffects, transitions: this.panelTransitions, text: this.panelText, export: this.panelExport }[this.tab];
+      effects: this.panelEffects, transitions: this.panelTransitions, text: this.panelText, export: this.panelExport,
+      auto: () => panelAuto(this), ai: () => panelAI(this) }[this.tab];
     el.innerHTML = fn.call(this);
     this.bindPanel(el);
     if (this.tab === 'record') this.bindRecord(el);
+    if (this.tab === 'auto') bindAuto(this, el);
+    if (this.tab === 'ai') bindAI(this, el);
     el.scrollTop = scroll;
   }
 
@@ -1396,6 +1401,91 @@ class App {
     }
   }
 
+  // ---- settings ------------------------------------------------------------------------------
+  async showSettings() {
+    const st = await api('GET', '/api/settings');
+    const pr = st.prefs;
+    const keyRow = (name, k) => `<div class="key-card" data-svc="${name}">
+        <div class="row"><b style="flex:1">${esc(k.label)}</b>
+          <span class="key-state ${k.set ? 'ok' : ''}">${k.set ? (k.from_env ? 'set (from the computer)' : 'saved') : 'not set'}</span></div>
+        <div class="hint" style="margin:2px 0 6px">${esc(k.used_for)}</div>
+        <div class="row"><input type="password" class="key-input" autocomplete="off" spellcheck="false"
+            placeholder="${k.set ? esc(k.hint) + '  (type to replace)' : 'Paste your API key'}" style="flex:1">
+          <button class="btn small" data-test>Test</button>
+          ${k.saved ? '<button class="btn small danger" data-remove>Remove</button>' : ''}</div>
+        <div class="hint key-msg"><a href="${esc(k.url)}" target="_blank" rel="noopener">Get a key</a></div></div>`;
+    const opt = (list, cur) => list.map(([v, l]) => `<option value="${esc(v)}" ${String(cur) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    this.modal(`<h3>⚙️ Settings</h3>
+      <div class="settings-grid">
+      <section><h4>API keys</h4>
+        <p class="hint">Keys are only needed for the AI features. They are stored on this computer only
+          (encrypted for your Windows account) and sent only to that service.</p>
+        ${Object.entries(st.keys).map(([n, k]) => keyRow(n, k)).join('')}
+        <div class="field"><label>Claude model</label><div class="row">
+          <select id="set-claude_model">${opt([['claude-opus-5-5', 'Claude Opus 5.5 (best)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (faster, cheaper)'], ['claude-haiku-5-5', 'Claude Haiku 5.5 (fastest)']], pr.claude_model)}</select>
+          <select id="set-claude_effort">${opt([['low', 'Quick'], ['medium', 'Balanced'], ['high', 'Thorough']], pr.claude_effort)}</select></div></div>
+      </section>
+      <section><h4>Speech to text</h4>
+        <div class="field"><label>Accuracy (bigger is slower; downloads once)</label>
+          <select id="set-whisper_model">${opt([['tiny', 'Tiny (fastest)'], ['base', 'Base'], ['small', 'Small (recommended)'], ['medium', 'Medium'], ['large-v3', 'Large (most accurate)']], pr.whisper_model)}</select></div>
+        <div class="field"><label>Language</label>
+          <select id="set-whisper_language">${opt([['', 'Detect automatically'], ['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['pt', 'Portuguese'], ['it', 'Italian'], ['nl', 'Dutch'], ['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese'], ['hi', 'Hindi'], ['ar', 'Arabic'], ['ru', 'Russian']], pr.whisper_language)}</select></div>
+        <div class="field"><label>Use the graphics card</label>
+          <select id="set-whisper_device">${opt([['auto', 'Automatic'], ['cpu', 'No (processor only)'], ['cuda', 'Yes (NVIDIA)']], pr.whisper_device)}</select></div>
+        <h4>Auto Edit</h4>
+        <div class="field"><label>Pause kept at each cut: <b id="kp-v">${(+pr.tighten_keep_pause).toFixed(2)}s</b></label>
+          <input type="range" id="set-tighten_keep_pause" min="0.04" max="0.4" step="0.01" value="${pr.tighten_keep_pause}" style="width:100%"></div>
+        <div class="field"><label>Cut pauses longer than: <b id="mg-v">${(+pr.tighten_min_gap).toFixed(2)}s</b></label>
+          <input type="range" id="set-tighten_min_gap" min="0.15" max="1.5" step="0.05" value="${pr.tighten_min_gap}" style="width:100%"></div>
+        <label class="check"><input type="checkbox" id="set-remove_fillers" ${pr.remove_fillers ? 'checked' : ''}> Remove um / uh</label>
+        <label class="check"><input type="checkbox" id="set-remove_restarts" ${pr.remove_restarts ? 'checked' : ''}> Remove repeated words and false starts</label>
+        <label class="check"><input type="checkbox" id="set-punch_ins" ${pr.punch_ins ? 'checked' : ''}> Zoom in and out at cuts to hide jumps</label>
+        <label class="check"><input type="checkbox" id="set-bleep_swears" ${pr.bleep_swears ? 'checked' : ''}> Bleep swear words</label>
+        <div class="field"><label>Background music level: <b id="mv-v">${Math.round(pr.music_volume * 100)}%</b></label>
+          <input type="range" id="set-music_volume" min="0.03" max="0.5" step="0.01" value="${pr.music_volume}" style="width:100%"></div>
+        <div class="field"><label>Export file name (${esc('{project} {preset} {date} {time} {n}')})</label>
+          <input type="text" id="set-export_name_pattern" value="${esc(pr.export_name_pattern)}" style="width:100%"></div>
+      </section></div>
+      <p class="hint">Your projects, settings and logs are in <code>${esc(st.data_folder)}</code>
+        <button class="btn small" id="set-open">Open folder</button></p>
+      <div class="row"><div class="spacer"></div><button class="btn" data-close>Cancel</button>
+        <button class="btn primary" id="set-save">Save</button></div>`, true);
+    const live = [['set-tighten_keep_pause', 'kp-v', v => (+v).toFixed(2) + 's'], ['set-tighten_min_gap', 'mg-v', v => (+v).toFixed(2) + 's'],
+      ['set-music_volume', 'mv-v', v => Math.round(v * 100) + '%']];
+    live.forEach(([id, out, f]) => { $('#' + id).oninput = (e) => { $('#' + out).textContent = f(e.target.value); }; });
+    $('#set-open').onclick = () => api('POST', '/api/settings/open-folder');
+    $$('.key-card').forEach(card => {
+      const name = card.dataset.svc, msg = $('.key-msg', card);
+      $('[data-test]', card).onclick = async () => {
+        msg.textContent = 'Testing…';
+        const r = await api('POST', '/api/settings/test', { service: name, key: $('.key-input', card).value });
+        msg.textContent = (r.ok ? '✅ ' : '❌ ') + r.message;
+      };
+      const rm = $('[data-remove]', card);
+      if (rm) rm.onclick = async () => {
+        await api('PUT', '/api/settings', { keys: { [name]: '' } });
+        this.toast('Key removed.');
+        this.showSettings();
+      };
+    });
+    $('#set-save').onclick = async () => {
+      const keys = {};
+      $$('.key-card').forEach(card => { const v = $('.key-input', card).value.trim(); if (v) keys[card.dataset.svc] = v; });
+      const prefs = {};
+      for (const k of Object.keys(pr)) {
+        const el = $('#set-' + k);
+        if (el) prefs[k] = el.type === 'checkbox' ? el.checked : el.value;
+      }
+      const r = await api('PUT', '/api/settings', { keys, prefs });
+      this.settings = r.prefs;
+      this.meta.ai = r.keys.anthropic.set;
+      this.meta.eleven = r.keys.elevenlabs.set;
+      if (this.tab === 'auto' || this.tab === 'ai') this.renderPanel();
+      this.closeModal();
+      this.toast('Settings saved.');
+    };
+  }
+
   async showChangelog() {
     const { text, version } = await api('GET', '/api/changelog');
     const html = esc(text).split('\n').map(line => {
@@ -1410,9 +1500,10 @@ class App {
   }
 
   // ---- chrome: modal, toasts, keyboard, preview drag --------------------------------------------
-  modal(html) {
+  modal(html, wide = false) {
     const m = $('#modal');
     $('.modal-body', m).innerHTML = html;
+    $('.modal-card', m)?.classList.toggle('wide', wide);
     m.classList.remove('hidden');
     $$('[data-close]', m).forEach(b => b.onclick = () => this.closeModal());
   }
@@ -1438,6 +1529,7 @@ class App {
     $('#btn-render').onclick = () => this.render();
     $('#btn-exact').onclick = () => this.exactPreview();
     $('#btn-whatsnew').onclick = () => this.showChangelog();
+    $('#btn-settings').onclick = () => this.showSettings();
     $('#btn-play').onclick = () => this.preview.toggle();
     $('#btn-split').onclick = () => this.split();
     $('#btn-delete').onclick = () => this.deleteSelected();

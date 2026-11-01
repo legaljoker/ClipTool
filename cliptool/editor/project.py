@@ -53,7 +53,10 @@ EFFECTS: dict[str, dict] = {
     "vignette": {"label": "Vignette", "help": "Darkens the corners", "params": {}},
     "invert": {"label": "Invert colors", "help": "Negative image", "params": {}},
     "glitch": {"label": "Glitch / RGB split", "help": "Color channels split apart", "params": {"amount": 12}},
+    "bleep": {"label": "Bleep (censor)", "help": "Mutes the sound and plays a bleep tone", "params": {"tone": 1000}},
+    "mute": {"label": "Mute", "help": "Silences the video's sound", "params": {}},
 }
+AUDIO_EFFECTS = {"bleep", "mute"}
 
 # ffmpeg xfade transition names -> labels.
 TRANSITIONS: dict[str, str] = {
