@@ -17,8 +17,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from cliptool.editor import textfx
 from cliptool.emotions import EXPRESSION_LABELS, EXPRESSIONS, FALLBACKS
-from cliptool.reformat import CROP_MODES, FRAME_STYLES
+from cliptool.reformat import FRAME_STYLES
+
+EXPRESSION_EMOJI = {"neutral": "😐", "happy": "😊", "sad": "😢", "mad": "😠", "angry": "😡", "rofl": "🤣",
+                    "lol": "😂", "disappointed": "😞", "face_slap": "🤦", "excited": "🤩", "surprised": "😮",
+                    "scared": "😱"}
+CROP_MODES = {"crop": "Fill the screen (crops the sides)"}
+CHROMA_COLORS = {"green": "#00FF00", "blue": "#0000FF"}
 
 SCHEMA_VERSION = 1
 
@@ -100,10 +107,17 @@ def meta() -> dict:
         "expressions": EXPRESSIONS,
         "expression_labels": EXPRESSION_LABELS,
         "expression_fallbacks": FALLBACKS,
+        "expression_emoji": EXPRESSION_EMOJI,
+        "default_expressions": default_expressions(),
+        **textfx.meta(),
         "person_colors": PERSON_COLORS,
         "caption_style": DEFAULT_CAPTION_STYLE,
         "frame": DEFAULT_FRAME,
     }
+
+
+def default_expressions() -> list[dict]:
+    return [{"id": e, "label": EXPRESSION_LABELS[e], "emoji": EXPRESSION_EMOJI.get(e, "")} for e in EXPRESSIONS]
 
 
 def new_project(name: str) -> dict:
@@ -119,11 +133,24 @@ def normalize(p: dict) -> dict:
         p["preset"] = "tiktok"
     p["frame"] = {**DEFAULT_FRAME, **(p.get("frame") or {})}
     p["caption_style"] = {**DEFAULT_CAPTION_STYLE, **(p.get("caption_style") or {})}
-    for key in ("media", "clips", "people", "captions", "effects", "overlays"):
+    for key in ("media", "clips", "people", "captions", "effects", "overlays", "audio"):
         p.setdefault(key, [])
+    if not p.get("expressions"):
+        p["expressions"] = default_expressions()
+    if not any(e.get("id") == "neutral" for e in p["expressions"]):
+        p["expressions"].insert(0, default_expressions()[0])
+    expr_ids = {e["id"] for e in p["expressions"]}
+    for m in p["media"]:
+        m.setdefault("kind", "video")
     p.setdefault("export", {"loudnorm": True})
     media_ids = {m["id"] for m in p["media"]}
-    p["clips"] = [c for c in p["clips"] if c.get("media") in media_ids and c.get("out", 0) > c.get("in", 0)]
+    video_ids = {m["id"] for m in p["media"] if m.get("kind", "video") == "video"}
+    p["clips"] = [c for c in p["clips"] if c.get("media") in video_ids and c.get("out", 0) > c.get("in", 0)]
+    p["audio"] = [a for a in p["audio"] if a.get("media") in media_ids and a.get("out", 0) > a.get("in", 0)]
+    for a in p["audio"]:
+        a.setdefault("id", new_id("a"))
+        a.setdefault("volume", 1.0)
+        a["end"] = round(float(a["start"]) + float(a["out"]) - float(a["in"]), 3)
     for c in p["clips"]:
         c.setdefault("id", new_id("c"))
         c.setdefault("volume", 1.0)
@@ -137,12 +164,19 @@ def normalize(p: dict) -> dict:
         k.setdefault("id", new_id("k"))
         k.setdefault("person", None)
         k.setdefault("expression", "neutral")
+        if k["expression"] not in expr_ids:
+            k["expression"] = "neutral"
         k.setdefault("words", None)
     for e in p["effects"]:
         e.setdefault("id", new_id("e"))
         e["params"] = {**EFFECTS.get(e.get("type"), {}).get("params", {}), **(e.get("params") or {})}
+    p["overlays"] = [o for o in p["overlays"] if o.get("type") != "video" or o.get("media") in media_ids]
     for o in p["overlays"]:
         o.setdefault("id", new_id("o"))
+        if o.get("type") == "video":  # timeline length always equals the used part of the file
+            o["end"] = round(float(o["start"]) + float(o["out"]) - float(o["in"]), 3)
+        if o.get("type") == "text":
+            o.setdefault("style", "bold")
     return p
 
 

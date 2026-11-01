@@ -9,6 +9,58 @@ When you change the application, add an entry at the top and bump the version in
 
 ---
 
+## [1.2.0] - 2026-11-01 - Stand-alone app, text styles, recording, live dragging
+
+### Added
+- **ClipTool Editor is a real Windows program.** `ClipTool-Editor-Setup.exe` installs it (no admin
+  needed), with a Start-menu and desktop shortcut. It opens in its own window and has Python and ffmpeg
+  built in, so no batch files are needed to install or run it. A portable zip is also available. Your
+  projects, settings and logs live in **Documents\ClipTool**. Speech models download there on first use.
+- The Windows build is made automatically on GitHub. Each build runs a **self-test of the finished
+  program** (renders a project using every feature, checks every ffmpeg filter, runs speech-to-text)
+  before it is published on the Releases page. You can run it yourself with `ClipTool-Editor.exe --selftest`.
+- **Text styles:** Plain, Bold, Clipped, Highlighter, Hackerman, Intuition, Meme, Outline, Pixel,
+  Signature and Neon. They use bundled fonts (Montserrat, Anton, Bangers, Great Vibes, Press Start 2P,
+  Share Tech Mono; SIL Open Font License), so they look the same on every PC and in the final video.
+  Font picker and colour pickers per text.
+- **Text animations** in and out: fade, pop, slide (4 directions), zoom, blur, typewriter, with an
+  adjustable speed.
+- **Animated titles** (motion titles with a second line): bar, slanted bar, accent box, accent circle,
+  underline, line-in.
+- **Record tab:**
+  - **Voice:** microphone picker, 5-minute timer, live level meter, start/stop button, listen back,
+    then add at the playhead.
+  - **Webcam:** camera + microphone picker, live preview. Add the recording on top of the video
+    (picture-in-picture) or as a clip.
+  - **Uploads** for VTuber / overlay videos and for music or sounds.
+- **Audio track** on the timeline, showing a waveform. Move, trim by dragging its ends, split (S),
+  volume, and fade in/out. Mixed into the final video.
+- **Video on top (picture-in-picture):**
+  - size and position by dragging on the video
+  - rectangle or circle shape
+  - green / blue / custom-colour background removal, previewed live
+  - transparent .webm VTuber videos keep their transparency
+  - trim and split like audio
+- **Add or remove expressions** (People tab). Custom expressions get an emoji face from
+  **Cartoon faces**. Removing one turns its captions back to Neutral.
+- **Live dragging everywhere:**
+  - Effects, text and titles show in the preview while you drag them over the timeline or video,
+    with a ghost bar and a time tooltip.
+  - Moving or resizing a bar moves the preview to that spot.
+  - Clips can be dragged to a new place, and their captions and effects move with them.
+- **What's new** button in the editor shows this change log.
+- `cliptool app` command opens the editor window from source.
+
+### Fixed
+- Overlapping text and pictures in the timeline no longer hide behind each other (lanes).
+- Webcam recordings are no longer mistaken for see-through videos. Chrome marks them that way,
+  so ClipTool now checks the actual pixels.
+- Browser recordings are rewritten on import, so they have a proper length and can be seeked.
+
+### Changed
+- "Smart" (face-following) cropping was removed from the editor's style list because the editor never
+  supported it. It is still available in the menu tools.
+
 ## [1.1.0] - 2026-10-31 - Video editor and frame styles
 
 ### Added

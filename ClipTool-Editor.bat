@@ -6,5 +6,5 @@ if not exist .venv (
   call install.bat
 )
 call .venv\Scripts\activate.bat
-python -m cliptool editor
+python -m cliptool app
 pause

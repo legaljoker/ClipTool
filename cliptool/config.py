@@ -7,12 +7,17 @@ from __future__ import annotations
 
 import copy
 import os
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
 
-APP_ROOT = Path(__file__).resolve().parent.parent
+# Where bundled files live (the source folder, or the unpacked app when running ClipTool-Editor.exe).
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+# Where projects, settings, logs and outputs go. The desktop app sets CLIPTOOL_HOME to Documents\ClipTool.
+APP_ROOT = Path(os.environ["CLIPTOOL_HOME"]) if os.environ.get("CLIPTOOL_HOME") else \
+    Path(__file__).resolve().parent.parent
 
 DEFAULTS: dict[str, Any] = {
     "paths": {

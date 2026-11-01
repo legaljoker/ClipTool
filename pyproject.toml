@@ -13,6 +13,8 @@ dependencies = [
     "PyYAML>=6.0",
     "faster-whisper>=1.0",
     "opencv-python-headless>=4.7,<5",
+    "pillow>=9",
+    "pywebview>=5; platform_system == 'Windows' or platform_system == 'Darwin'",
 ]
 
 [project.optional-dependencies]
@@ -25,11 +27,14 @@ dev = ["pytest>=7"]
 [project.scripts]
 cliptool = "cliptool.cli:main"
 
+[project.gui-scripts]
+ClipTool-Editor = "cliptool.desktop:main"
+
 [tool.setuptools]
 packages = ["cliptool", "cliptool.editor"]
 
 [tool.setuptools.package-data]
-"cliptool.editor" = ["static/*.html", "static/css/*.css", "static/js/*.js"]
+"cliptool.editor" = ["static/*.html", "static/css/*.css", "static/js/*.js", "static/fonts/*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "cliptool.__version__"}

@@ -1,7 +1,9 @@
 // ClipTool Editor - main app: panels, inspector, drag & drop, saving, jobs.
 import { History, activeClips, clipLength, clipStarts, fmtTime, rippleDelete, totalDuration, uid } from './model.js';
 import { Preview } from './preview.js';
-import { EMOJI, Timeline } from './timeline.js';
+import { Timeline } from './timeline.js';
+import { displayText, loadFonts, styleCss, textPx, titleHtml, titleLayout } from './textfx.js';
+import { MAX_SECONDS, Recording, fmtClock, listDevices } from './record.js';
 import { canvasToBlob, drawCartoon, drawPhotoAvatar } from './faces.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -9,6 +11,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const VIDEO_EXT = /\.(mp4|mov|mkv|webm|avi|m4v|flv|wmv|mts|ts)$/i;
+const AUDIO_EXT = /\.(mp3|wav|m4a|aac|ogg|opus|flac)$/i;
 const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/i;
 const MAIN_EXPRESSIONS = ['neutral', 'happy', 'sad', 'mad', 'angry', 'rofl', 'lol', 'disappointed', 'face_slap'];
 
@@ -54,6 +57,7 @@ class App {
 
   async init() {
     this.meta = await api('GET', '/api/meta');
+    await loadFonts(this.meta.bundled_fonts);
     this.preview = new Preview(this, $('#stage'));
     this.timeline = new Timeline(this, $('#timeline'));
     $('#preset').innerHTML = Object.entries(this.meta.presets).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
@@ -129,7 +133,10 @@ class App {
     clearTimeout(this.saveTimer);
     if (!this.project || !this.pid) return;
     try {
-      await api('PUT', `/api/projects/${this.pid}`, this.project);
+      // never save the temporary "drop preview" items
+      const clean = { ...this.project, effects: this.project.effects.filter(x => !x._ghost),
+        overlays: this.project.overlays.filter(x => !x._ghost) };
+      await api('PUT', `/api/projects/${this.pid}`, clean);
       $('#save-state').textContent = 'Saved';
     } catch (e) {
       $('#save-state').textContent = 'Not saved!';
@@ -180,9 +187,12 @@ class App {
     this.preview.draw();
   }
 
+  exprs() { return this.project.expressions || this.meta.default_expressions; }
+  exprEmoji(id) { return (this.exprs().find(e => e.id === id) || {}).emoji || ''; }
+
   findItem(kind, id) {
     const p = this.project;
-    const list = { caption: p.captions, effect: p.effects, overlay: p.overlays, clip: p.clips }[kind];
+    const list = { caption: p.captions, effect: p.effects, overlay: p.overlays, clip: p.clips, audio: p.audio }[kind];
     return list ? list.find(x => x.id === id) : null;
   }
 
@@ -201,10 +211,13 @@ class App {
   renderPanel() {
     const el = $('#panel');
     const scroll = el.scrollTop;
-    const fn = { media: this.panelMedia, captions: this.panelCaptions, people: this.panelPeople, style: this.panelStyle,
+    if (this.tab === 'record' && this.rec && el.querySelector('#rec-go')) return;  // don't disturb a live recording
+    if (this.tab !== 'record' && this.rec && !this.rec.recording) { this.rec.close(); this.rec = null; }
+    const fn = { media: this.panelMedia, record: this.panelRecord, captions: this.panelCaptions, people: this.panelPeople, style: this.panelStyle,
       effects: this.panelEffects, transitions: this.panelTransitions, text: this.panelText, export: this.panelExport }[this.tab];
     el.innerHTML = fn.call(this);
     this.bindPanel(el);
+    if (this.tab === 'record') this.bindRecord(el);
     el.scrollTop = scroll;
   }
 
@@ -213,14 +226,155 @@ class App {
     const cards = p.media.map(m => `<div class="card media-card" draggable="true" data-drag='${JSON.stringify({ kind: 'media', id: m.id })}'>
         ${m.thumb ? `<img src="/files/${this.pid}/${m.thumb}">` : '<div class="noimg"></div>'}
         <div><div class="name" title="${esc(m.name)}">${esc(m.name)}</div>
-        <div class="muted">${fmtTime(m.duration, false)} · ${m.width}×${m.height}${m.proxy === null && !/\.(mp4|mov|m4v|webm)$/i.test(m.name) ? ' · preparing preview…' : ''}</div>
-        <button class="btn small" data-add-media="${m.id}">+ Add to timeline</button></div></div>`).join('');
+        <div class="muted">${m.kind === 'audio' ? '🎵 sound' : `${m.width}×${m.height}`} · ${fmtTime(m.duration, false)}${m.alpha ? ' · see-through' : ''}${m.kind !== 'audio' && m.proxy === null && !/\.(mp4|mov|m4v|webm)$/i.test(m.name) ? ' · preparing preview…' : ''}</div>
+        <div class="row" style="margin:2px 0 0">${m.kind === 'audio'
+          ? `<button class="btn small" data-add-audio="${m.id}">+ Add to audio track</button>`
+          : `<button class="btn small" data-add-media="${m.id}">+ Timeline</button><button class="btn small" data-add-pip="${m.id}" title="Picture-in-picture: on top of the main video">+ On top</button>`}</div></div></div>`).join('');
     return `<h3>Media</h3>
-      <div class="dropzone" data-pick="video">Drop videos here<br><small>or click to choose files</small></div>
+      <div class="dropzone" data-pick="video">Drop videos or sounds here<br><small>or click to choose files</small></div>
       <button class="btn" data-input-folder>📂 Add from the input folder</button>
       <div id="input-files"></div>
       <p class="hint">Drag a video onto the timeline, or press “+ Add to timeline”. It goes at the end (or where you drop it).</p>
-      <div class="cards">${cards || '<p class="muted">No videos yet.</p>'}</div>`;
+      <div class="cards">${cards || '<p class="muted">Nothing yet.</p>'}</div>`;
+  }
+
+  panelRecord() {
+    const mode = this.recMode || 'voice';
+    const review = this.recBlob ? `<div class="card rec-review">
+        <b>${mode === 'voice' ? 'Your recording' : 'Your webcam recording'}</b> · ${fmtClock(this.recSeconds || 0)}
+        ${mode === 'voice' ? `<audio controls src="${this.recUrl}"></audio>` : `<video controls src="${this.recUrl}"></video>`}
+        <div class="row">${mode === 'voice'
+          ? '<button class="btn primary" data-rec-add="audio">+ Add at the playhead</button>'
+          : `<button class="btn primary" data-rec-add="overlay">+ Add on top of the video</button>
+             <button class="btn" data-rec-add="clip">+ Add as a clip</button>`}
+          <button class="btn danger" data-rec-discard>Discard</button></div>
+        <p class="hint">It lands at the playhead (${fmtTime(this.time)}). Afterwards drag it anywhere on the timeline,
+        drag its ends to trim it, or press <kbd>S</kbd> to split it.</p></div>` : '';
+    return `<h3>Record</h3>
+      <div class="seg"><button data-rec-mode="voice" class="${mode === 'voice' ? 'active' : ''}">🎙 Voice</button>
+        <button data-rec-mode="webcam" class="${mode === 'webcam' ? 'active' : ''}">📷 Webcam</button></div>
+      ${mode === 'webcam' ? `<div class="field"><label>Camera</label><select id="rec-cam"><option>Loading…</option></select></div>` : ''}
+      <div class="field"><label>Microphone</label><select id="rec-mic"><option>Loading…</option></select></div>
+      ${mode === 'webcam' ? '<video id="rec-preview" class="rec-preview" muted playsinline></video>' : ''}
+      <div class="rec-clock" id="rec-clock">00:00 / ${fmtClock(MAX_SECONDS)}</div>
+      <canvas id="rec-wave" class="rec-wave" width="560" height="80"></canvas>
+      <p class="muted center">${mode === 'voice' ? 'Record your voice' : 'Record yourself (or your VTuber virtual camera)'}</p>
+      <button class="rec-btn" id="rec-go" title="Start / stop"><span></span></button>
+      <p class="muted center" id="rec-label">Start Recording</p>
+      ${review}
+      <h4>Upload</h4>
+      <div class="row"><button class="btn" data-upload-overlay>🧍 VTuber / video on top…</button>
+        <button class="btn" data-upload-audio>🎵 Music / sound…</button></div>
+      <p class="hint"><b>VTuber:</b> upload a video of your 2D/3D model, or pick your VTuber app's virtual camera
+      (VTube Studio, Veadotube, OBS Virtual Camera...) as the camera above. Use a green background and turn on
+      <b>Remove background</b> for it; transparent .webm files keep their transparency automatically.</p>`;
+  }
+
+  async bindRecord(el) {
+    const mode = this.recMode || 'voice';
+    $$('[data-rec-mode]', el).forEach(b => b.onclick = () => {
+      if (this.rec?.recording) return this.toast('Stop the recording first.');
+      this.rec?.close(); this.rec = null;
+      this.recMode = b.dataset.recMode;
+      this.clearRecording();
+      this.renderPanel();
+    });
+    $$('[data-rec-add]', el).forEach(b => b.onclick = async () => {
+      const as = b.dataset.recAdd;
+      const file = new File([this.recBlob], `${mode === 'voice' ? 'voice' : 'webcam'}_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`,
+        { type: this.recBlob.type });
+      b.disabled = true;
+      const entry = await this.uploadMedia(file, { as, time: this.time, recording: true });
+      if (entry) { this.clearRecording(); this.renderPanel(); }
+      else b.disabled = false;
+    });
+    const disc = $('[data-rec-discard]', el);
+    if (disc) disc.onclick = () => { this.clearRecording(); this.renderPanel(); };
+    $('[data-upload-overlay]', el).onclick = () => this.pickFiles('video/*,.webm,.mov,.mkv', (f) => f[0] && this.uploadMedia(f[0], { as: 'overlay' }), false);
+    $('[data-upload-audio]', el).onclick = () => this.pickFiles('audio/*', (f) => f[0] && this.uploadMedia(f[0], { as: 'audio' }), false);
+
+    const store = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
+    const read = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+    const fill = async (sel, kind, key) => {
+      if (!sel) return;
+      const list = await listDevices(kind);
+      sel.innerHTML = list.length ? list.map(d => `<option value="${esc(d.id)}">${esc(d.label)}</option>`).join('')
+        : '<option value="">None found</option>';
+      const saved = read(key);
+      if (saved && list.some(d => d.id === saved)) sel.value = saved;
+      sel.onchange = () => { store(key, sel.value); this.openRecorder(); };
+    };
+    if (!navigator.mediaDevices?.getUserMedia) {
+      $('#rec-label', el).textContent = 'Recording is not available here.';
+      return;
+    }
+    await fill($('#rec-mic', el), 'audioinput', 'cliptool.mic');
+    await fill($('#rec-cam', el), 'videoinput', 'cliptool.cam');
+    await this.openRecorder();
+    $('#rec-go', el).onclick = () => this.toggleRecording();
+    if (this.rec?.recording) {
+      $('#rec-go', el).classList.add('on');
+      $('#rec-label', el).textContent = 'Recording… click to stop';
+    }
+  }
+
+  async openRecorder() {
+    const el = $('#panel');
+    if (this.rec?.recording) return;
+    this.rec?.close();
+    const mode = this.recMode || 'voice';
+    const levels = [];
+    const wave = $('#rec-wave', el);
+    const draw = (lv) => {
+      if (!wave || !wave.isConnected) return;
+      levels.push(lv);
+      if (levels.length > 140) levels.shift();
+      const c = wave.getContext('2d'), w = wave.width, h = wave.height;
+      c.clearRect(0, 0, w, h);
+      c.fillStyle = this.rec?.recording ? '#ff3d6e' : '#59607a';
+      levels.forEach((v, i) => {
+        const bh = Math.max(3, Math.min(1, v * 2.2) * h * 0.9);
+        c.fillRect(w - (levels.length - i) * 4, (h - bh) / 2, 2, bh);
+      });
+    };
+    this.rec = new Recording({
+      video: mode === 'webcam', micId: $('#rec-mic', el)?.value || null, camId: $('#rec-cam', el)?.value || null,
+      onLevel: draw,
+      onTick: (s) => { const c = $('#rec-clock'); if (c) c.textContent = `${fmtClock(s)} / ${fmtClock(MAX_SECONDS)}`; },
+      onAutoStop: () => this.toggleRecording(),
+    });
+    try {
+      await this.rec.open($('#rec-preview', el));
+    } catch (e) {
+      $('#rec-label', el).textContent = `Can't use the ${mode === 'voice' ? 'microphone' : 'camera'}: ${e.message}`;
+      this.rec = null;
+    }
+  }
+
+  async toggleRecording() {
+    const el = $('#panel');
+    if (!this.rec) await this.openRecorder();
+    if (!this.rec) return;
+    if (!this.rec.recording) {
+      this.clearRecording(false);
+      this.rec.start();
+      $('#rec-go', el)?.classList.add('on');
+      const l = $('#rec-label', el); if (l) l.textContent = 'Recording… click to stop';
+      return;
+    }
+    const blob = await this.rec.stop();
+    this.recSeconds = this.rec.seconds;
+    this.rec.close();
+    this.rec = null;
+    if (!blob || !blob.size) return this.toast('Nothing was recorded.', true);
+    this.recBlob = blob;
+    this.recUrl = URL.createObjectURL(blob);
+    this.renderPanel();
+  }
+
+  clearRecording(revoke = true) {
+    if (revoke && this.recUrl) URL.revokeObjectURL(this.recUrl);
+    this.recBlob = null; this.recUrl = null;
   }
 
   panelCaptions() {
@@ -228,8 +382,8 @@ class App {
     const people = p.people;
     const peopleOpts = (sel) => `<option value="">No person</option>` +
       people.map(x => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
-    const exprOpts = (sel) => this.meta.expressions.map(e =>
-      `<option value="${e}" ${e === sel ? 'selected' : ''}>${EMOJI[e] || ''} ${esc(this.meta.expression_labels[e])}</option>`).join('');
+    const exprOpts = (sel) => this.exprs().map(e =>
+      `<option value="${e.id}" ${e.id === sel ? 'selected' : ''}>${esc(e.emoji)} ${esc(e.label)}</option>`).join('');
     const rows = [...p.captions].sort((a, b) => a.start - b.start).map(c => {
       const person = people.find(x => x.id === c.person);
       const s = this.selection;
@@ -276,11 +430,11 @@ class App {
   panelPeople() {
     const p = this.project;
     const cards = p.people.map((person, i) => {
-      const slots = this.meta.expressions.map(e => {
-        const rel = person.avatars?.[e];
-        return `<div class="av-slot ${rel ? 'has' : ''}" data-avatar="${person.id}" data-expr="${e}" title="${esc(this.meta.expression_labels[e])}: drop a picture or click">
-          ${rel ? `<img src="/files/${this.pid}/${rel}?v=${this.version}">` : `<b style="font-size:20px">${EMOJI[e] || ''}</b>`}
-          <span>${esc(this.meta.expression_labels[e])}</span></div>`;
+      const slots = this.exprs().map(e => {
+        const rel = person.avatars?.[e.id];
+        return `<div class="av-slot ${rel ? 'has' : ''}" data-avatar="${person.id}" data-expr="${e.id}" title="${esc(e.label)}: drop a picture or click">
+          ${rel ? `<img src="/files/${this.pid}/${rel}?v=${this.version}">` : `<b style="font-size:20px">${esc(e.emoji)}</b>`}
+          <span>${esc(e.label)}</span></div>`;
       }).join('');
       const nCaps = p.captions.filter(c => c.person === person.id).length;
       return `<div class="card person" style="border-left:4px solid ${person.color}">
@@ -299,7 +453,16 @@ class App {
       <p class="hint">Drop a picture on an expression, or use <b>Cartoon faces</b> / <b>From a photo</b> to fill them all.
       Pictures with a transparent background look best.</p>
       <button class="btn primary" id="btn-add-person">+ Add person</button>
-      <div style="margin-top:10px">${cards || '<p class="muted">No people yet.</p>'}</div>`;
+      <div style="margin-top:10px">${cards || '<p class="muted">No people yet.</p>'}</div>
+      <h4>Expressions</h4>
+      <p class="hint">These are the expressions you can pick for each caption. Add your own (e.g. "Shocked 😱",
+      "Thinking 🤔") or remove ones you don't use. Neutral can't be removed.</p>
+      <div class="expr-chips">${this.exprs().map(e => `<span class="chip">${esc(e.emoji)} ${esc(e.label)}
+        ${e.id === 'neutral' ? '' : `<button class="link" data-del-expr="${esc(e.id)}" title="Remove">✕</button>`}</span>`).join('')}</div>
+      <div class="row"><input type="text" id="new-expr-emoji" placeholder="🙂" maxlength="4" style="width:52px;text-align:center">
+        <input type="text" id="new-expr-name" placeholder="New expression name" style="flex:1">
+        <button class="btn" id="btn-add-expr">+ Add</button></div>
+      <button class="btn small" id="btn-reset-expr">Restore the standard list</button>`;
   }
 
   panelStyle() {
@@ -352,17 +515,35 @@ class App {
   }
 
   panelText() {
+    const S = this.meta.text_styles, TT = this.meta.title_templates;
+    const tw = 1080, th = 810;  // tile previews use a small virtual frame
+    const styleTiles = Object.entries(S).map(([id, st]) => {
+      const o = { style: id, text: st.label, size: 52, x: 0.5, y: 0.5 };
+      const kk = 15 / textPx(o, S, tw, th);
+      return `<div class="tile text-tile" draggable="true" data-drag='${JSON.stringify({ kind: 'text', style: id })}' data-add-text="${id}">
+        <div class="ico"><span style="${styleCss(o, S, tw, th, kk)}">${esc(displayText(o, S))}</span></div>${esc(st.label)}</div>`;
+    }).join('');
+    const titleTiles = Object.entries(TT).map(([id, tpl]) => {
+      const o = { template: id, text: 'Motion', subtitle: 'Titles example', size: 120, x: 0.5, y: 0.5, start: 0, end: 10 };
+      const box = titleLayout(o, TT, tw, th);
+      const k = Math.min(70 / box.w, 46 / box.h);  // fit the tile (about 80 x 60 px)
+      const { lay, html } = titleHtml(o, TT, tw, th, k, 2);
+      return `<div class="tile title-tile" draggable="true" data-drag='${JSON.stringify({ kind: 'title', template: id })}' data-add-title="${id}">
+        <div class="ico"><div style="position:absolute;left:calc(50% - ${lay.w * k / 2}px);top:calc(50% - ${lay.h * k / 2}px);width:${lay.w * k}px;height:${lay.h * k}px;
+          transform:rotate(${lay.rot}deg)">${html}</div></div>${esc(tpl.label)}</div>`;
+    }).join('');
     const list = this.project.overlays.map(o => `<div class="card row" data-sel-overlay="${o.id}" style="cursor:pointer">
-      ${o.type === 'image' ? `<img src="/files/${this.pid}/${o.src}" style="width:40px;height:40px;object-fit:contain">` : '<b>T</b>'}
-      <span style="flex:1">${esc(o.type === 'image' ? o.src.split('/').pop() : o.text)}</span>
+      ${o.type === 'image' ? `<img src="/files/${this.pid}/${o.src}" style="width:40px;height:40px;object-fit:contain">`
+        : `<b>${{ text: 'T', title: '🎬', video: '🎥' }[o.type] || '•'}</b>`}
+      <span style="flex:1">${esc(o.type === 'image' ? o.src.split('/').pop() : o.type === 'video' ? 'Video overlay' : o.text)}</span>
       <span class="muted">${fmtTime(o.start, false)}–${fmtTime(o.end, false)}</span></div>`).join('');
     return `<h3>Text & pictures</h3>
-      <div class="tiles">
-        <div class="tile" draggable="true" data-drag='${JSON.stringify({ kind: 'text' })}' id="btn-add-text"><div class="ico">T</div>Add text<small>Titles, call-outs</small></div>
-        <div class="tile" data-pick="image"><div class="ico">🖼</div>Add picture<small>Stickers, logos, emojis</small></div>
-      </div>
-      <div class="dropzone" data-pick="image" style="margin-top:10px">Drop pictures here, or straight onto the video where you want them</div>
-      <p class="hint">Drag them on the video to move them; drag the yellow corner to resize. Their bar on the timeline sets when they show.</p>
+      <p class="hint">Click to add at the playhead, or drag onto the timeline or straight onto the video.</p>
+      <h4>Text styles</h4><div class="tiles three">${styleTiles}</div>
+      <h4>Animated titles</h4><div class="tiles three">${titleTiles}</div>
+      <h4>Pictures</h4>
+      <div class="dropzone" data-pick="image">Drop pictures here (stickers, logos, emojis), or straight onto the video</div>
+      <p class="hint">Drag things on the video to move them; drag the yellow corner to resize. Their bar on the timeline sets when they show.</p>
       <div class="cards">${list}</div>`;
   }
 
@@ -382,12 +563,23 @@ class App {
   bindPanel(el) {
     const p = this.project;
     // generic: drag sources
-    $$('[data-drag]', el).forEach(d => d.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('application/x-cliptool', d.dataset.drag);
-      e.dataTransfer.effectAllowed = 'copy';
-    }));
+    $$('[data-drag]', el).forEach(d => {
+      d.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('application/x-cliptool', d.dataset.drag);
+        e.dataTransfer.effectAllowed = 'copy';
+        this.dragging = JSON.parse(d.dataset.drag);
+        // a small label instead of a copy of the whole tile, so it doesn't hide the live preview
+        const chip = document.createElement('div');
+        chip.className = 'drag-chip';
+        chip.textContent = (d.innerText || '').split('\n').filter(Boolean).pop() || 'Item';
+        document.body.appendChild(chip);
+        e.dataTransfer.setDragImage(chip, 12, 12);
+        setTimeout(() => chip.remove(), 0);
+      });
+      d.addEventListener('dragend', () => { this.dragging = null; this.timeline.clearDrop(); this.renderAll(); });
+    });
     $$('[data-pick]', el).forEach(z => {
-      z.onclick = () => this.pickFiles(z.dataset.pick === 'video' ? 'video/*,.mkv,.ts,.mts' : 'image/*', (files) => this.dropFiles(files, {}));
+      z.onclick = () => this.pickFiles(z.dataset.pick === 'video' ? 'video/*,audio/*,.mkv,.ts,.mts' : 'image/*', (files) => this.dropFiles(files, {}));
       z.addEventListener('dragover', (e) => { e.preventDefault(); z.classList.add('over'); });
       z.addEventListener('dragleave', () => z.classList.remove('over'));
       z.addEventListener('drop', (e) => { e.preventDefault(); z.classList.remove('over'); this.dropFiles(e.dataTransfer.files, {}); });
@@ -396,6 +588,8 @@ class App {
 
     // media
     $$('[data-add-media]', el).forEach(b => b.onclick = () => this.addClip(b.dataset.addMedia));
+    $$('[data-add-pip]', el).forEach(b => b.onclick = () => this.addVideoOverlay(b.dataset.addPip, this.time));
+    $$('[data-add-audio]', el).forEach(b => b.onclick = () => this.addAudioItem(b.dataset.addAudio, this.time));
     const inp = $('[data-input-folder]', el);
     if (inp) inp.onclick = async () => {
       const files = await api('GET', '/api/input-files');
@@ -403,7 +597,7 @@ class App {
         <button class="btn small" data-import="${esc(f.path)}">Import</button></div>`).join('') : '<p class="muted">The input folder is empty.</p>';
       $$('[data-import]').forEach(b => b.onclick = async () => {
         b.disabled = true; b.textContent = 'Importing…';
-        try { this.mediaAdded(await api('POST', `/api/projects/${this.pid}/media-path`, { path: b.dataset.import }), true); }
+        try { this.mediaAdded(await api('POST', `/api/projects/${this.pid}/media-path`, { path: b.dataset.import }), 'clip'); }
         catch (e) { this.toast(e.message, true); }
         b.textContent = 'Added';
       });
@@ -456,6 +650,34 @@ class App {
       img.src = URL.createObjectURL(files[0]);
     }, false));
 
+    const addExpr = $('#btn-add-expr', el);
+    if (addExpr) {
+      const go = () => {
+        const label = $('#new-expr-name', el).value.trim();
+        if (!label) return this.toast('Type a name for the expression first.');
+        const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || uid('x');
+        if (this.exprs().some(e => e.id === id)) return this.toast('That expression already exists.');
+        this.change(pp => { pp.expressions = [...this.exprs(), { id, label, emoji: $('#new-expr-emoji', el).value.trim() || '🙂' }]; });
+        this.toast(`Added "${label}". Give each person a picture for it (drop one on the new slot, or use Cartoon faces).`);
+      };
+      addExpr.onclick = go;
+      $('#new-expr-name', el).onkeydown = (e) => e.key === 'Enter' && go();
+      $$('[data-del-expr]', el).forEach(b => b.onclick = () => {
+        const id = b.dataset.delExpr;
+        const used = p.captions.filter(c => c.expression === id).length;
+        if (used && !confirm(`${used} caption(s) use this expression. They will become Neutral. Remove it?`)) return;
+        this.change(pp => {
+          pp.expressions = this.exprs().filter(e => e.id !== id);
+          pp.captions.forEach(c => { if (c.expression === id) c.expression = 'neutral'; });
+          pp.people.forEach(x => { if (x.avatars) { delete x.avatars[id]; delete x.avatars[`${id}_talk`]; } });
+        });
+      });
+      $('#btn-reset-expr', el).onclick = () => this.change(pp => {
+        const custom = this.exprs().filter(e => !this.meta.default_expressions.some(d => d.id === e.id));
+        pp.expressions = [...this.meta.default_expressions, ...custom];
+      });
+    }
+
     // style
     $$('[data-frame]', el).forEach(t => t.onclick = () => this.change(pp => { pp.frame.style = t.dataset.frame; }));
     $$('[data-frame-num]', el).forEach(i => i.addEventListener('input', () => this.liveStyle(() => { p.frame[i.dataset.frameNum] = +i.value; }, i, true)));
@@ -480,8 +702,8 @@ class App {
       $('#tr-all', el).onclick = () => this.change(pp => pp.clips.forEach((c, i) => { if (i > 0) c.transition = { type: c.transition?.type || 'fade', duration: this.trLen || 0.5 }; }));
       $('#tr-none', el).onclick = () => this.change(pp => pp.clips.forEach(c => { c.transition = null; }));
     }
-    const addText = $('#btn-add-text', el);
-    if (addText) addText.addEventListener('click', () => this.addText(this.time));
+    $$('[data-add-text]', el).forEach(t => t.addEventListener('click', () => this.addText(this.time, 0.5, 0.2, t.dataset.addText)));
+    $$('[data-add-title]', el).forEach(t => t.addEventListener('click', () => this.addTitle(this.time, 0.5, 0.3, t.dataset.addTitle)));
     $$('[data-sel-overlay]', el).forEach(r => r.onclick = () => {
       const o = this.findItem('overlay', r.dataset.selOverlay);
       this.seek(o.start + 0.01);
@@ -580,10 +802,10 @@ class App {
     } else if (sel.kind === 'caption') {
       const p = this.project;
       const person = p.people.find(x => x.id === item.person);
-      const picks = this.meta.expressions.map(e => {
-        const src = person ? this.avatarUrl(person, e, false) : null;
-        return `<button data-expr="${e}" class="${item.expression === e ? 'active' : ''}" title="${esc(this.meta.expression_labels[e])}">
-          ${src && person?.avatars?.[e] ? `<img src="${src}">` : `<b>${EMOJI[e] || ''}</b>`}${esc(this.meta.expression_labels[e])}</button>`;
+      const picks = this.exprs().map(e => {
+        const src = person ? this.avatarUrl(person, e.id, false) : null;
+        return `<button data-expr="${e.id}" class="${item.expression === e.id ? 'active' : ''}" title="${esc(e.label)}">
+          ${src && person?.avatars?.[e.id] ? `<img src="${src}">` : `<b>${esc(e.emoji)}</b>`}${esc(e.label)}</button>`;
       }).join('');
       html = `<h3>💬 Caption</h3>
         <div class="field"><label>Text</label><textarea id="cap-text">${esc(item.text)}</textarea></div>
@@ -608,18 +830,18 @@ class App {
           return `<div class="row"><label>${labels[k] || k}</label><input type="range" min="${a}" max="${b}" step="${s}" data-param="${k}" value="${item.params[k]}"><span>${(+item.params[k]).toFixed(2)}</span></div>`; }).join('')}
         <div class="row"><button class="btn danger" data-act="delete">🗑 Delete</button></div>`;
     } else if (sel.kind === 'overlay') {
-      html = item.type === 'image' ? `<h3>🖼 Picture</h3>
-        <img src="/files/${this.pid}/${item.src}" style="max-width:100%;max-height:120px;display:block;margin:6px auto">
-        <div class="row"><label>Size</label><input type="range" min="0.03" max="1" step="0.01" data-num-live="w" value="${item.w}"><span>${Math.round(item.w * 100)}%</span></div>`
-        : `<h3>T Text</h3>
-        <div class="field"><textarea id="ov-text">${esc(item.text)}</textarea></div>
-        <div class="row"><label>Font</label><input type="text" id="ov-font" value="${esc(item.font || 'Arial')}" style="flex:1"></div>
-        <div class="row"><label>Size</label><input type="range" min="20" max="220" data-num-live="size" value="${item.size}"><span>${item.size}</span></div>
-        <div class="row"><label>Colors</label><input type="color" data-color="color" value="${item.color}"><input type="color" data-color="outline" value="${item.outline}"></div>
-        <div class="row"><label>Outline</label><input type="range" min="0" max="20" data-num-live="outline_width" value="${item.outline_width ?? 5}"><span>${item.outline_width ?? 5}</span></div>`;
-      html += `<div class="row"><label>From</label>${num('start', item.start)}</div>
-        <div class="row"><label>To</label>${num('end', item.end)}</div>
-        <div class="row"><button class="btn danger" data-act="delete">🗑 Delete</button></div>`;
+      html = this.overlayInspector(item, num);
+    } else if (sel.kind === 'audio') {
+      const m = this.project.media.find(x => x.id === item.media) || {};
+      html = `<h3>🎙 Audio</h3><div class="muted">${esc(m.name)}</div>
+        <div class="row"><label>Name</label><input type="text" id="aud-name" value="${esc(item.name || '')}" placeholder="${esc(m.name)}" style="flex:1"></div>
+        <div class="row"><label>Starts at</label>${num('start', item.start)}<span class="muted">in the video</span></div>
+        <div class="row"><label>Uses</label>${num('in', item.in)}<span>to</span>${num('out', item.out)}<span class="muted">s of ${(+m.duration || 0).toFixed(1)}s</span></div>
+        <div class="row"><label>Volume</label><input type="range" min="0" max="2" step="0.05" data-num-live="volume" value="${item.volume ?? 1}"><span>${Math.round((item.volume ?? 1) * 100)}%</span></div>
+        <div class="row"><label>Fade in</label><input type="range" min="0" max="3" step="0.1" data-num-live="fade_in" value="${item.fade_in || 0}"><span>${item.fade_in || 0}</span></div>
+        <div class="row"><label>Fade out</label><input type="range" min="0" max="3" step="0.1" data-num-live="fade_out" value="${item.fade_out || 0}"><span>${item.fade_out || 0}</span></div>
+        <p class="hint">Drag the bar to move it; drag its ends to cut the start or end off. <kbd>S</kbd> splits it at the playhead.</p>
+        <div class="row"><button class="btn" data-act="split">✂ Split at playhead</button><button class="btn danger" data-act="delete">🗑 Delete</button></div>`;
     }
     el.innerHTML = html;
     this.bindInspector(el, item);
@@ -630,6 +852,15 @@ class App {
     $$('[data-num]', el).forEach(i => i.onchange = () => this.change(pp => {
       const k = i.dataset.num;
       let v = +i.value;
+      if (this.selection.kind !== 'clip' && item.media !== undefined && item.in !== undefined) {
+        const m = pp.media.find(x => x.id === item.media) || { duration: 1e9 };
+        if (k === 'in') v = clamp(v, 0, item.out - 0.1);
+        if (k === 'out') v = clamp(v, item.in + 0.1, m.duration);
+        if (k === 'start') v = Math.max(0, v);
+        item[k] = v;
+        item.end = +item.start + (+item.out - +item.in);
+        return;
+      }
       if (this.selection.kind === 'clip') {
         const m = pp.media.find(x => x.id === item.media);
         if (k === 'in') v = clamp(v, 0, item.out - 0.2);
@@ -675,7 +906,18 @@ class App {
     const ot = $('#ov-text', el);
     if (ot) ot.onchange = () => this.change(() => { item.text = ot.value; });
     const of = $('#ov-font', el);
-    if (of) of.onchange = () => this.change(() => { item.font = of.value; });
+    if (of) of.onchange = () => this.change(() => { item.font = of.value || null; });
+    const bindSel = (sel, key) => { const s = $(sel, el); if (s) s.onchange = () => this.change(() => { item[key] = s.value; }); };
+    bindSel('#ov-style', 'style');
+    bindSel('#ov-in', 'anim_in');
+    bindSel('#ov-out', 'anim_out');
+    bindSel('#title-tpl', 'template');
+    bindSel('#pip-shape', 'shape');
+    bindSel('#pip-chroma', 'chroma');
+    const bindText = (sel, key) => { const s = $(sel, el); if (s) s.onchange = () => this.change(() => { item[key] = s.value; }); };
+    bindText('#title-text', 'text');
+    bindText('#title-sub', 'subtitle');
+    bindText('#aud-name', 'name');
     $$('[data-act]', el).forEach(b => b.onclick = () => {
       const act = b.dataset.act;
       if (act === 'delete') this.deleteSelected();
@@ -686,14 +928,14 @@ class App {
   }
 
   // ---- editing actions ----------------------------------------------------------------------
-  addClip(mediaId, atTime) {
+  addClip(mediaId, atTime, index) {
     const p = this.project;
     const m = p.media.find(x => x.id === mediaId);
     if (!m) return;
     const clip = { id: uid('c'), media: m.id, in: 0, out: +m.duration, volume: 1, transition: null };
     this.change(pp => {
-      let idx = pp.clips.length;
-      if (atTime != null && pp.clips.length) {
+      let idx = index ?? pp.clips.length;
+      if (index == null && atTime != null && pp.clips.length) {
         const starts = clipStarts(pp.clips, this.meta.transitions);
         idx = starts.findIndex((s, i) => atTime < s + clipLength(pp.clips[i]) / 2);
         if (idx < 0) idx = pp.clips.length;
@@ -714,6 +956,18 @@ class App {
 
   split() {
     const p = this.project, t = this.time;
+    const sel = this.selection;
+    const item = sel && (sel.kind === 'audio' || sel.kind === 'overlay') ? this.findItem(sel.kind, sel.id) : null;
+    if (item && item.media !== undefined && item.in !== undefined) {  // audio or video overlay
+      if (t <= item.start + 0.05 || t >= item.end - 0.05) return this.toast('Move the playhead inside the selected item.');
+      this.change(() => {
+        const cut = +item.in + (t - item.start);
+        const second = { ...item, id: uid(sel.kind === 'audio' ? 'a' : 'o'), in: cut, start: t };
+        item.out = cut; item.end = t;
+        (sel.kind === 'audio' ? this.project.audio : this.project.overlays).push(second);
+      });
+      return this.toast('Split. Click a piece and press Delete to remove it.');
+    }
     const act = activeClips(p, t, this.meta.transitions).filter(a => !a.transition);
     const a = act[act.length - 1];
     if (!a || t - a.start < 0.1 || a.end - t < 0.1) return this.toast('Move the playhead inside a clip to cut it.');
@@ -753,7 +1007,7 @@ class App {
         if (pp.clips[i] && i === 0) pp.clips[0].transition = null;
         rippleDelete(pp, a, b);
       } else {
-        const key = { caption: 'captions', effect: 'effects', overlay: 'overlays' }[sel.kind];
+        const key = { caption: 'captions', effect: 'effects', overlay: 'overlays', audio: 'audio' }[sel.kind];
         pp[key] = pp[key].filter(x => x.id !== sel.id);
       }
     });
@@ -777,9 +1031,89 @@ class App {
     this.select({ kind: 'effect', id: e.id });
   }
 
-  addText(t, x = 0.5, y = 0.2) {
-    const o = { id: uid('o'), type: 'text', text: 'YOUR TEXT', x, y, size: 64, color: '#FFFFFF', outline: '#000000',
-      outline_width: 6, font: 'Arial', start: +t.toFixed(2), end: +(t + 3).toFixed(2) };
+  overlayInspector(item, num) {
+    const timing = `<div class="row"><label>From</label>${num('start', item.start)}</div>
+        <div class="row"><label>To</label>${num('end', item.end)}</div>`;
+    const del = '<div class="row"><button class="btn danger" data-act="delete">🗑 Delete</button></div>';
+    const anims = (key, list, val) => `<select id="${key}">${Object.entries(list).map(([k, v]) => `<option value="${k}" ${k === (val || 'none') ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
+    if (item.type === 'image') {
+      return `<h3>🖼 Picture</h3>
+        <img src="/files/${this.pid}/${item.src}" style="max-width:100%;max-height:120px;display:block;margin:6px auto">
+        <div class="row"><label>Size</label><input type="range" min="0.03" max="1" step="0.01" data-num-live="w" value="${item.w}"><span>${Math.round(item.w * 100)}%</span></div>
+        ${timing}${del}`;
+    }
+    if (item.type === 'video') {
+      const m = this.project.media.find(x => x.id === item.media) || {};
+      return `<h3>🎥 Video on top</h3><div class="muted">${esc(m.name)}${m.alpha ? ' · see-through background' : ''}</div>
+        <div class="row"><label>Size</label><input type="range" min="0.08" max="1" step="0.01" data-num-live="w" value="${item.w}"><span>${Math.round(item.w * 100)}%</span></div>
+        <div class="row"><label>Shape</label><select id="pip-shape">${[['rect', 'Rectangle'], ['circle', 'Circle']].map(([k, v]) =>
+          `<option value="${k}" ${item.shape === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+        <div class="row"><label>Remove background</label><select id="pip-chroma">${[['none', 'Off'], ['green', 'Green screen'], ['blue', 'Blue screen'], ['custom', 'Pick a color']].map(([k, v]) =>
+          `<option value="${k}" ${(item.chroma || 'none') === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+          ${item.chroma === 'custom' ? `<input type="color" data-color="chroma_color" value="${item.chroma_color || '#00FF00'}">` : ''}</div>
+        ${item.chroma && item.chroma !== 'none' ? `<div class="row"><label>Strength</label><input type="range" min="0.02" max="0.5" step="0.01" data-num-live="chroma_sim" value="${item.chroma_sim ?? 0.15}"><span>${item.chroma_sim ?? 0.15}</span></div>` : ''}
+        <div class="row"><label>Volume</label><input type="range" min="0" max="2" step="0.05" data-num-live="volume" value="${item.volume ?? 1}"><span>${Math.round((item.volume ?? 1) * 100)}%</span></div>
+        <div class="row"><label>Starts at</label>${num('start', item.start)}</div>
+        <div class="row"><label>Uses</label>${num('in', item.in)}<span>to</span>${num('out', item.out)}<span class="muted">s of the file</span></div>
+        <p class="hint">Drag it on the video to move it, drag the yellow corner to resize. Drag the ends of its bar to trim.</p>
+        <div class="row"><button class="btn" data-act="split">✂ Split at playhead</button></div>${del}`;
+    }
+    if (item.type === 'title') {
+      const TT = this.meta.title_templates;
+      return `<h3>🎬 Animated title</h3>
+        <div class="row"><label>Look</label><select id="title-tpl">${Object.entries(TT).map(([k, v]) => `<option value="${k}" ${item.template === k ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select></div>
+        <div class="field"><label>Title</label><input type="text" id="title-text" value="${esc(item.text)}" style="width:100%"></div>
+        <div class="field"><label>Second line</label><input type="text" id="title-sub" value="${esc(item.subtitle || '')}" style="width:100%"></div>
+        <div class="row"><label>Size</label><input type="range" min="30" max="200" data-num-live="size" value="${item.size}"><span>${item.size}</span></div>
+        <div class="row"><label>Colors</label><input type="color" data-color="accent" value="${item.accent || TT[item.template]?.accent || '#FFFFFF'}" title="Shapes">
+          <input type="color" data-color="color" value="${item.color || TT[item.template]?.color || '#FFFFFF'}" title="Title text"></div>
+        ${timing}${del}`;
+    }
+    const S = this.meta.text_styles, st = S[item.style] || S.bold;
+    return `<h3>T Text</h3>
+      <div class="field"><textarea id="ov-text">${esc(item.text)}</textarea></div>
+      <div class="row"><label>Style</label><select id="ov-style">${Object.entries(S).map(([k, v]) => `<option value="${k}" ${item.style === k ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select></div>
+      <div class="row"><label>Font</label><select id="ov-font"><option value="">Style's font (${esc(st.font)})</option>${this.meta.fonts.map(f =>
+        `<option ${item.font === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select></div>
+      <div class="row"><label>Size</label><input type="range" min="20" max="220" data-num-live="size" value="${item.size}"><span>${item.size}</span></div>
+      <div class="row"><label>Colors</label><input type="color" data-color="color" value="${item.color || st.color}" title="Text">
+        ${st.box || st.glow ? `<input type="color" data-color="accent" value="${item.accent || st.box || st.glow}" title="${st.box ? 'Box' : 'Glow'}">` : ''}
+        ${!st.box && !st.glow && !st.hollow ? `<input type="color" data-color="outline" value="${item.outline || st.outline || '#000000'}" title="Outline">` : ''}</div>
+      <h4>Animation</h4>
+      <div class="row"><label>In</label>${anims('ov-in', this.meta.anim_in, item.anim_in)}</div>
+      <div class="row"><label>Out</label>${anims('ov-out', this.meta.anim_out, item.anim_out)}</div>
+      <div class="row"><label>Speed</label><input type="range" min="0.1" max="2" step="0.05" data-num-live="anim_dur" value="${item.anim_dur ?? 0.4}"><span>${item.anim_dur ?? 0.4}s</span></div>
+      ${timing}${del}`;
+  }
+
+  addText(t, x = 0.5, y = 0.2, style = 'bold') {
+    const o = { id: uid('o'), type: 'text', style, text: 'YOUR TEXT', x, y, size: 64, anim_in: 'pop', anim_out: 'fade',
+      anim_dur: 0.4, start: +t.toFixed(2), end: +(t + 3).toFixed(2) };
+    this.change(pp => pp.overlays.push(o));
+    this.select({ kind: 'overlay', id: o.id });
+  }
+
+  addTitle(t, x = 0.5, y = 0.3, template = 'bar') {
+    const o = { id: uid('o'), type: 'title', template, text: 'Your title', subtitle: 'Second line', x, y, size: 90,
+      start: +t.toFixed(2), end: +(t + 4).toFixed(2) };
+    this.change(pp => pp.overlays.push(o));
+    this.select({ kind: 'overlay', id: o.id });
+  }
+
+  addAudioItem(mediaId, t) {
+    const m = this.project.media.find(x => x.id === mediaId);
+    if (!m) return;
+    const a = { id: uid('a'), media: m.id, name: m.recording ? 'Voice recording' : m.name, in: 0, out: +m.duration,
+      start: +t.toFixed(2), end: +(t + m.duration).toFixed(2), volume: 1, fade_in: 0, fade_out: 0 };
+    this.change(pp => pp.audio.push(a));
+    this.select({ kind: 'audio', id: a.id });
+  }
+
+  addVideoOverlay(mediaId, t, x = 0.75, y = 0.78) {
+    const m = this.project.media.find(x => x.id === mediaId);
+    if (!m) return;
+    const o = { id: uid('o'), type: 'video', media: m.id, in: 0, out: +m.duration, start: +t.toFixed(2),
+      end: +(t + m.duration).toFixed(2), x, y, w: 0.4, shape: 'rect', chroma: 'none', chroma_sim: 0.15, volume: 1 };
     this.change(pp => pp.overlays.push(o));
     this.select({ kind: 'overlay', id: o.id });
   }
@@ -816,16 +1150,25 @@ class App {
     inp.click();
   }
 
-  async dropFiles(files, { time, x, y }) {
+  // Upload a video/audio file. `as` = 'clip' | 'overlay' | 'audio' | null (just add to Media).
+  async uploadMedia(file, { as = 'clip', time, recording = false, x, y } = {}) {
+    const t = this.toast(`Uploading ${file.name || 'recording'}…`, false, 0);
+    try {
+      const name = file.name || `recording_${Date.now()}.webm`;
+      const entry = await upload(`/api/projects/${this.pid}/media?name=${encodeURIComponent(name)}${recording ? '&recording=1' : ''}`, file,
+        (fr) => { t.textContent = `Uploading ${name}… ${Math.round(fr * 100)}%`; });
+      t.remove();
+      this.mediaAdded(entry, entry.kind === 'audio' ? 'audio' : as, time ?? this.time, x, y);
+      return entry;
+    } catch (e) { t.remove(); this.toast(`${file.name || 'Recording'}: ${e.message}`, true); return null; }
+  }
+
+  async dropFiles(files, { time, x, y, track }) {
     for (const f of files) {
       if (VIDEO_EXT.test(f.name)) {
-        const t = this.toast(`Uploading ${f.name}…`, false, 0);
-        try {
-          const entry = await upload(`/api/projects/${this.pid}/media?name=${encodeURIComponent(f.name)}`, f,
-            (fr) => { t.textContent = `Uploading ${f.name}… ${Math.round(fr * 100)}%`; });
-          t.remove();
-          this.mediaAdded(entry, true, time);
-        } catch (e) { t.remove(); this.toast(`${f.name}: ${e.message}`, true); }
+        await this.uploadMedia(f, { as: track === 'overlays' || (x != null && this.project.clips.length) ? 'overlay' : 'clip', time, x, y });
+      } else if (AUDIO_EXT.test(f.name)) {
+        await this.uploadMedia(f, { as: 'audio', time });
       } else if (IMAGE_EXT.test(f.name)) {
         try {
           const r = await upload(`/api/projects/${this.pid}/image?name=${encodeURIComponent(f.name)}`, f);
@@ -835,29 +1178,63 @@ class App {
           this.select({ kind: 'overlay', id: o.id });
         } catch (e) { this.toast(`${f.name}: ${e.message}`, true); }
       } else {
-        this.toast(`${f.name}: not a video or picture`, true);
+        this.toast(`${f.name}: not a video, sound or picture`, true);
       }
     }
   }
 
-  mediaAdded(entry, addToTimeline, atTime) {
+  mediaAdded(entry, as, atTime, x, y) {
     this.project.media.push(entry);
     if (entry.proxy_job) this.pollJob(entry.proxy_job, null, (job) => {
-      const m = this.project.media.find(x => x.id === entry.id);
+      const m = this.project.media.find(m2 => m2.id === entry.id);
       if (m && job.result) { m.proxy = job.result.proxy; this.dirty(); this.renderAll(); }
     });
-    if (addToTimeline) this.addClip(entry.id, atTime);
+    if (as === 'audio' || entry.kind === 'audio') { if (as) this.addAudioItem(entry.id, atTime ?? this.time); else this.renderAll(); }
+    else if (as === 'overlay') this.addVideoOverlay(entry.id, atTime ?? this.time, x ?? 0.75, y ?? 0.78);
+    else if (as === 'clip' || as === true) this.addClip(entry.id, atTime);
     else this.renderAll();
     this.toast(`Added ${entry.name}`);
   }
 
-  dropItem(item, { time, clipId, x, y }) {
+  dropItem(item, { time, clipId, x, y, track, index }) {
+    const p = this.project;
     if (item.kind === 'effect') this.addEffect(item.type, time, x, y);
     else if (item.kind === 'transition') {
       if (!clipId) return this.toast('Drop transitions onto a clip in the Video row.');
       this.setTransition(clipId, item.type);
-    } else if (item.kind === 'media') this.addClip(item.id, time);
-    else if (item.kind === 'text') this.addText(time, x, y);
+    } else if (item.kind === 'media') {
+      const m = p.media.find(mm => mm.id === item.id);
+      if (!m) return;
+      if (m.kind === 'audio' || track === 'audio') this.addAudioItem(m.id, time);
+      else if (track === 'overlays' || (x != null && p.clips.length)) this.addVideoOverlay(m.id, time, x ?? 0.75, y ?? 0.78);
+      else this.addClip(m.id, time, index);
+    } else if (item.kind === 'text') this.addText(time, x, y, item.style || 'bold');
+    else if (item.kind === 'title') this.addTitle(time, x, y, item.template || 'bar');
+  }
+
+  // While something is dragged over the timeline or video, show it live in the preview.
+  previewDrop(drag, t, x, y) {
+    const p = this.project;
+    for (const key of ['effects', 'overlays']) p[key] = p[key].filter(it => !it._ghost);
+    if (drag && ['effect', 'text', 'title'].includes(drag.kind)) {
+      const g = { id: '__ghost', _ghost: true, start: t, x: x ?? 0.5, y: y ?? (drag.kind === 'title' ? 0.3 : 0.2) };
+      if (drag.kind === 'effect') {
+        const def = this.meta.effects[drag.type];
+        Object.assign(g, { type: drag.type, end: t + 2, params: { ...def.params, ...(x != null && 'x' in def.params ? { x, y } : {}) } });
+        p.effects.push(g);
+      } else if (drag.kind === 'text') {
+        Object.assign(g, { type: 'text', style: drag.style || 'bold', text: 'YOUR TEXT', size: 64, end: t + 3 });
+        p.overlays.push(g);
+      } else {
+        Object.assign(g, { type: 'title', template: drag.template || 'bar', text: 'Your title', subtitle: 'Second line', size: 90, start: t - 2, end: t + 2 });
+        p.overlays.push(g);
+      }
+      // (the timeline isn't re-rendered here: replacing elements under the mouse cancels the drop)
+      if (Math.abs(this.time - t) > 0.01) this.preview.seek(t); else this.preview.draw();
+    } else {
+      this.preview.lastHtml = null;
+      this.preview.draw();
+    }
   }
 
   async uploadAvatar(personId, expr, blob, quiet = false) {
@@ -876,9 +1253,10 @@ class App {
     const t = this.toast(`Making ${person.name}'s avatars…`, false, 0);
     this.beginChange();
     try {
-      for (const e of this.meta.expressions) {
+      for (const ex of this.exprs()) {
+        const e = ex.id;
         for (const talk of [false, true]) {
-          const cv = photo ? drawPhotoAvatar(photo, e, talk, person.color) : drawCartoon(e, talk);
+          const cv = photo ? drawPhotoAvatar(photo, e, talk, person.color, 256, ex.emoji) : drawCartoon(e, talk, undefined, 256, ex.emoji);
           await this.uploadAvatar(personId, talk ? `${e}_talk` : e, await canvasToBlob(cv), true);
         }
       }
@@ -957,6 +1335,19 @@ class App {
     }
   }
 
+  async showChangelog() {
+    const { text, version } = await api('GET', '/api/changelog');
+    const html = esc(text).split('\n').map(line => {
+      if (line.startsWith('## ')) return `<h3>${line.slice(3)}</h3>`;
+      if (line.startsWith('### ')) return `<h4>${line.slice(4)}</h4>`;
+      if (line.startsWith('# ')) return '';
+      if (/^\s*- /.test(line)) return `<li style="margin-left:${line.search(/\S/) * 6}px">${line.trim().slice(2)}</li>`;
+      return line.trim() === '---' ? '<hr>' : `<p class="hint" style="margin:2px 0">${line}</p>`;
+    }).join('').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
+    this.modal(`<h3>ClipTool ${esc(version)} - change log</h3><div class="changelog">${html}</div>
+      <div class="row"><div class="spacer"></div><button class="btn" data-close>Close</button></div>`);
+  }
+
   // ---- chrome: modal, toasts, keyboard, preview drag --------------------------------------------
   modal(html) {
     const m = $('#modal');
@@ -985,6 +1376,7 @@ class App {
     $('#btn-redo').onclick = () => this.redo();
     $('#btn-render').onclick = () => this.render();
     $('#btn-exact').onclick = () => this.exactPreview();
+    $('#btn-whatsnew').onclick = () => this.showChangelog();
     $('#btn-play').onclick = () => this.preview.toggle();
     $('#btn-split').onclick = () => this.split();
     $('#btn-delete').onclick = () => this.deleteSelected();
@@ -1034,7 +1426,7 @@ class App {
         const [x, y] = norm(ev);
         moved = true;
         if (resize) {
-          if (target.type === 'image') target.w = clamp(s0.w + (x - x0) * 2, 0.03, 1.2);
+          if (target.type === 'image' || target.type === 'video') target.w = clamp(s0.w + (x - x0) * 2, 0.03, 1.2);
           else target.size = clamp(Math.round(s0.size * (1 + (x - x0) * 3)), 12, 300);
         } else {
           target[keyX] = +clamp(sx + x - x0, 0, 1).toFixed(4);
@@ -1053,11 +1445,27 @@ class App {
     });
     // drops onto the video
     const stage = $('#stage');
-    stage.addEventListener('dragover', (e) => { e.preventDefault(); box.classList.add('drop-hover'); });
-    stage.addEventListener('dragleave', () => box.classList.remove('drop-hover'));
+    let lastGhost = 0;
+    stage.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      box.classList.add('drop-hover');
+      const now = performance.now();
+      if (this.dragging && now - lastGhost > 40) {  // live: the item appears under the mouse
+        lastGhost = now;
+        const [x, y] = norm(e);
+        this.previewDrop(this.dragging, this.time, x, y);
+      }
+    });
+    stage.addEventListener('dragleave', (e) => {
+      if (stage.contains(e.relatedTarget)) return;
+      box.classList.remove('drop-hover');
+      this.previewDrop(null);
+    });
     stage.addEventListener('drop', (e) => {
       e.preventDefault();
       box.classList.remove('drop-hover');
+      this.previewDrop(null);
       const [x, y] = norm(e);
       if (e.dataTransfer.files.length) return this.dropFiles(e.dataTransfer.files, { x, y });
       const raw = e.dataTransfer.getData('application/x-cliptool');

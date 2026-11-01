@@ -14,7 +14,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
-body { display: grid; grid-template-rows: 48px 1fr 40px 230px; height: 100vh; }
+body { display: grid; grid-template-rows: 48px 1fr 40px 270px; height: 100vh; }
 button, input, select, textarea { font: inherit; color: inherit; }
 .hidden { display: none !important; }
 .muted { color: var(--muted); }
@@ -205,3 +205,50 @@ h4 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spac
 @keyframes spin { to { transform: rotate(360deg); } }
 kbd { background: #11131b; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 11px; }
 .shortcuts td { padding: 2px 8px 2px 0; }
+
+/* ---- 1.2: text galleries, record, video overlays, live drag -------------------------- */
+.center { text-align: center; }
+.tiles.three { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.tiles.three .tile { padding: 5px; font-size: 11px; }
+.text-tile .ico, .title-tile .ico { height: 64px; background: #000; display: grid; place-items: center; position: relative; overflow: hidden; }
+.text-tile .ico span { white-space: nowrap; }
+.title-tile .ico { display: block; }
+.seg { display: flex; background: #11131b; border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 3px; margin-bottom: 10px; }
+.seg button { flex: 1; background: none; border: 0; border-radius: 6px; padding: 6px; cursor: pointer; color: var(--muted); }
+.seg button.active { background: var(--panel2); color: var(--text); }
+.rec-clock { text-align: center; font-weight: 700; font-size: 15px; margin: 10px 0 6px; font-variant-numeric: tabular-nums; }
+.rec-wave { width: 100%; height: 56px; background: #2a2c38; border-radius: 10px; display: block; }
+.rec-btn { display: block; margin: 8px auto 2px; width: 56px; height: 56px; border-radius: 50%; border: 2px solid #4a4f66;
+  background: #1b1d27; cursor: pointer; position: relative; }
+.rec-btn span { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px; border-radius: 50%; background: #fff; transition: .15s; }
+.rec-btn.on { border-color: var(--accent); }
+.rec-btn.on span { background: var(--accent); border-radius: 4px; width: 18px; height: 18px; margin: -9px; }
+.rec-preview { width: 100%; border-radius: 8px; background: #000; aspect-ratio: 16/9; object-fit: cover; }
+.rec-review audio, .rec-review video { width: 100%; margin: 6px 0; border-radius: 6px; }
+.expr-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 14px; padding: 2px 9px; font-size: 12px; display: inline-flex; gap: 4px; align-items: center; }
+.pip-layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.pip { position: absolute; transform: translate(-50%, -50%); overflow: hidden; }
+.pip video, .pip canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
+.overlay-layer .pip-hit { border: 1px dashed rgba(255,255,255,.0); }
+.overlay-layer .pip-hit:hover { border-color: rgba(255,255,255,.4); }
+.overlay-layer .title-ov { transform: none; }
+.overlay-layer .title-ov > i, .overlay-layer .title-ov > span { pointer-events: none; }
+.drop-ghost { position: absolute; height: 34px; border: 2px dashed var(--accent2); background: rgba(43,217,197,.18);
+  border-radius: 6px; color: #dffcf8; font-size: 12px; padding: 7px 8px; white-space: nowrap; overflow: hidden; pointer-events: none; z-index: 6; }
+.insert-marker { position: absolute; width: 4px; background: var(--accent2); box-shadow: 0 0 10px var(--accent2); pointer-events: none; z-index: 6; border-radius: 2px; }
+.tl-tip { position: fixed; z-index: 70; background: #000c; color: #fff; border: 1px solid var(--line); border-radius: 5px;
+  padding: 3px 8px; font-size: 12px; pointer-events: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.clip.dragging { opacity: .75; z-index: 5; box-shadow: 0 6px 20px rgba(0,0,0,.6); cursor: grabbing; }
+.clip.drop-target { outline: 3px solid var(--accent2); }
+.bar.audio { --c: #2bd9c5; background-repeat: no-repeat; }
+.bar.ghost-bar { opacity: .55; border-style: dashed; }
+.tiles > .tile { min-width: 0; }
+.text-tile .ico { padding: 0 4px; }
+.changelog { max-height: 65vh; overflow: auto; padding-right: 8px; }
+.changelog li { margin-bottom: 3px; }
+/* while something is dragged in from the panel, the live preview items must not become drop targets
+   (they are redrawn constantly, and a drop target that disappears cancels the drop) */
+.frame-box.drop-hover .overlay-layer, .frame-box.drop-hover .overlay-layer * { pointer-events: none; }
+.drag-chip { position: fixed; top: -100px; left: -100px; background: var(--accent); color: #fff; font-weight: 600;
+  padding: 4px 10px; border-radius: 14px; font-size: 12px; white-space: nowrap; }

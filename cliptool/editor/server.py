@@ -32,6 +32,7 @@ log = get_logger("editor")
 
 STATIC = Path(__file__).parent / "static"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac"}
 BROWSER_FRIENDLY = {".mp4", ".m4v", ".mov", ".webm"}
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
@@ -105,30 +106,53 @@ class EditorApp:
         return self.locks.setdefault(pid, threading.Lock())
 
     # ---- media ---------------------------------------------------------
-    def add_media(self, pid: str, path: Path, rel: Optional[str] = None) -> dict:
+    def add_media(self, pid: str, path: Path, rel: Optional[str] = None, recording: bool = False) -> dict:
+        if recording:
+            path = self._fix_recording(path)
+            rel = f"media/{path.name}"
         info = probe(path)
-        if not info.has_video:
-            raise ValueError(f"{path.name} has no video")
+        if not info.has_video and not info.has_audio:
+            raise ValueError(f"{path.name} has no video or sound")
+        kind = "video" if info.has_video else "audio"
         mid = new_id("m")
         d = self.store.dir(pid)
         thumb = d / "cache" / f"{mid}.jpg"
         try:
-            ffmpeg(["-ss", f"{min(1.0, info.duration / 3):.2f}", "-i", path, "-frames:v", "1",
-                    "-vf", "scale=240:-2", "-q:v", "4", thumb], desc="thumbnail")
+            if kind == "video":
+                ffmpeg(["-ss", f"{min(1.0, info.duration / 3):.2f}", "-i", path, "-frames:v", "1",
+                        "-vf", "scale=240:-2", "-q:v", "4", thumb], desc="thumbnail")
+            else:  # waveform picture for the timeline
+                thumb = thumb.with_suffix(".png")
+                ffmpeg(["-i", path, "-filter_complex", "aformat=channel_layouts=mono,showwavespic=s=1200x80:colors=#2bd9c5",
+                        "-frames:v", "1", thumb], desc="waveform")
         except FFmpegError:
             thumb = None
-        entry = {"id": mid, "name": path.name, "path": rel or str(path.resolve()),
+        entry = {"id": mid, "kind": kind, "name": path.name, "path": rel or str(path.resolve()),
                  "duration": round(info.duration, 3), "width": info.width, "height": info.height,
                  "has_audio": info.has_audio, "fps": round(info.fps, 2),
-                 "thumb": f"cache/{mid}.jpg" if thumb else None, "proxy": None}
+                 "alpha": kind == "video" and not recording and _has_alpha(path),
+                 "thumb": f"cache/{thumb.name}" if thumb else None, "proxy": None, "recording": recording}
         with self.lock(pid):
             p = self.store.load(pid)
             p["media"].append(entry)
             self.store.save(pid, p)
-        if path.suffix.lower() not in BROWSER_FRIENDLY or self._needs_proxy(path):
+        if kind == "video" and not entry["alpha"] and (path.suffix.lower() not in BROWSER_FRIENDLY
+                                                         or self._needs_proxy(path)):
             job = self.jobs.start("proxy", pid, lambda job: self._make_proxy(pid, mid, path, job))
             return {**entry, "proxy_job": job.id}
         return entry
+
+    @staticmethod
+    def _fix_recording(raw: Path) -> Path:
+        """Browser recordings have no length/seek index; rewrite them so players and ffmpeg can seek."""
+        fixed = _unique(raw.with_name(raw.stem + "_rec.webm"))
+        try:
+            ffmpeg(["-fflags", "+genpts", "-i", raw, "-c", "copy", fixed], desc="fix recording")
+        except FFmpegError:
+            ffmpeg(["-i", raw, "-c:v", "libvpx-vp9", "-b:v", "2M", "-deadline", "realtime", "-cpu-used", "8",
+                    "-c:a", "libopus", fixed], desc="re-encode recording")
+        raw.unlink(missing_ok=True)
+        return fixed
 
     @staticmethod
     def _needs_proxy(path: Path) -> bool:
@@ -401,6 +425,10 @@ class Handler(BaseHTTPRequestHandler):
     def api(self, method: str, parts: list[str], q: dict):
         app = self.app
         store = app.store
+        if parts == ["changelog"]:
+            from cliptool.config import RESOURCE_ROOT
+            f = RESOURCE_ROOT / "CHANGELOG.md"
+            return self.send_json({"text": f.read_text(encoding="utf-8") if f.exists() else "", "version": __version__})
         if parts == ["meta"]:
             return self.send_json({**meta(), "version": __version__})
         if parts == ["input-files"]:
@@ -440,12 +468,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json({"ok": True})
             if rest == ["media"] and method == "POST":
                 name = Path(q.get("name") or "upload.mp4").name
-                if Path(name).suffix.lower() not in VIDEO_EXTENSIONS:
-                    return self.send_error_json(400, f"{name} is not a video file")
+                if Path(name).suffix.lower() not in VIDEO_EXTENSIONS | AUDIO_EXTENSIONS:
+                    return self.send_error_json(400, f"{name} is not a video or audio file")
                 dest = _unique(store.dir(pid) / "media" / _clean_name(name))
                 self.save_body(dest)
                 try:
-                    entry = app.add_media(pid, dest, f"media/{dest.name}")
+                    entry = app.add_media(pid, dest, f"media/{dest.name}", recording=q.get("recording") == "1")
                 except Exception:
                     dest.unlink(missing_ok=True)
                     raise
@@ -496,6 +524,33 @@ class Handler(BaseHTTPRequestHandler):
                 _open_folder(store.dir(pid) / "exports")
                 return self.send_json({"ok": True})
         self.send_error_json(404, "unknown api call")
+
+
+def _has_alpha(path: Path) -> bool:
+    """Does the video really have see-through parts (e.g. an exported VTuber animation)?
+
+    The alpha_mode tag alone can't be trusted (Chrome sets it on every webcam recording),
+    so a few frames are decoded and the transparency channel is checked.
+    """
+    try:
+        proc = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                               "stream_tags=alpha_mode:stream=pix_fmt,codec_name", "-of", "json", str(path)],
+                              capture_output=True, text=True)
+        st = (json.loads(proc.stdout or "{}").get("streams") or [{}])[0]
+        tags = {k.lower(): v for k, v in (st.get("tags") or {}).items()}
+        pix = str(st.get("pix_fmt", ""))
+        tagged = str(tags.get("alpha_mode", "")) == "1"
+        if not tagged and not any(f in pix for f in ("yuva", "rgba", "bgra", "argb", "abgr", "ya8", "gbrap")):
+            return False
+        dec = ["-c:v", "libvpx-vp9"] if st.get("codec_name") == "vp9" else \
+            ["-c:v", "libvpx"] if st.get("codec_name") == "vp8" else []
+        proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostdin", *dec, "-i", str(path), "-frames:v", "8",
+                               "-vf", "format=yuva420p,alphaextract,signalstats,metadata=print:key=lavfi.signalstats.YMIN",
+                               "-f", "null", "-"], capture_output=True, text=True)
+        mins = [int(float(line.split("=")[1])) for line in proc.stderr.splitlines() if "signalstats.YMIN=" in line]
+        return bool(mins) and min(mins) < 250
+    except (OSError, ValueError):
+        return False
 
 
 def _clean_name(name: str) -> str:

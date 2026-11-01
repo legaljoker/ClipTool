@@ -21,3 +21,6 @@ avatars/Example_Person/*
 !avatars/Example_Person/README.txt
 projects/*
 !projects/.gitkeep
+packaging/ffmpeg/
+selftest_home/
+*.spec.bak

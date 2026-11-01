@@ -1,6 +1,7 @@
 // Live preview: draws the edit on a <canvas> (clips, frame style, transitions, effects)
 // and shows captions / avatars / stickers / text as draggable elements on top.
 import { activeClips, captionAt, totalDuration } from './model.js';
+import { displayText, styleCss, textAnim, titleHtml, typewriterHtml } from './textfx.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -15,6 +16,9 @@ export class Preview {
     this.cctx = this.comp.getContext('2d');
     this.tiny = document.createElement('canvas');
     this.layer = stage.querySelector('.overlay-layer');
+    this.pipLayer = stage.querySelector('.pip-layer');
+    this.pips = new Map();    // video overlays (webcam, VTuber...) by overlay id
+    this.audios = new Map();  // audio track items by id
     this.videos = [0, 1].map(() => {
       const v = document.createElement('video');
       v.preload = 'auto';
@@ -53,6 +57,7 @@ export class Preview {
       if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
     }
     this.unit = (dw / W) * Math.min(W, H) / 1080;  // css px per "1080-frame px"
+    this.k = dw / W;  // css px per canvas px
     this.box.style.setProperty('--u', this.unit);
     this.draw();
   }
@@ -72,6 +77,8 @@ export class Preview {
   pause() {
     this.playing = false;
     this.videos.forEach(v => v.pause());
+    this.pips.forEach(el => el.querySelector('video').pause());
+    this.audios.forEach(a => a.pause());
     this.app.onPlayState(false);
   }
 
@@ -92,6 +99,7 @@ export class Preview {
   sync(force = false) {
     const p = this.p;
     if (!p) return;
+    this.syncExtras(force);
     const act = activeClips(p, this.time, this.meta.transitions);
     this.active = act;
     const media = Object.fromEntries(p.media.map(m => [m.id, m]));
@@ -113,6 +121,105 @@ export class Preview {
         if (force ? drift > 0.01 : drift > 0.04) v.currentTime = a.local;
       }
     });
+  }
+
+  syncMedia(v, local, force) {
+    const drift = Math.abs(v.currentTime - local);
+    if (this.playing) {
+      if (v.paused) { v.currentTime = local; v.play().catch(() => {}); }
+      else if (drift > 0.3) v.currentTime = local;
+    } else {
+      if (!v.paused) v.pause();
+      if (force ? drift > 0.01 : drift > 0.04) v.currentTime = local;
+    }
+  }
+
+  // video overlays and the audio track follow the playhead too
+  syncExtras(force) {
+    const p = this.p, t = this.time;
+    const media = Object.fromEntries(p.media.map(m => [m.id, m]));
+    const seen = new Set();
+    for (const o of p.overlays) {
+      if (o.type !== 'video' || !media[o.media]) continue;
+      const m = media[o.media];
+      seen.add(o.id);
+      let el = this.pips.get(o.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'pip';
+        const v = document.createElement('video');
+        v.preload = 'auto'; v.playsInline = true; v.crossOrigin = 'anonymous';
+        v.addEventListener('seeked', () => this.drawChroma());
+        v.addEventListener('loadeddata', () => this.drawChroma());
+        el.append(v, document.createElement('canvas'));
+        this.pipLayer.appendChild(el);
+        this.pips.set(o.id, el);
+      }
+      const v = el.firstChild, c = el.lastChild;
+      const url = this.mediaUrl(m);
+      if (v.dataset.url !== url) { v.dataset.url = url; v.src = url; }
+      const visible = t >= o.start && t < o.end;
+      const ar = o.shape === 'circle' ? 1 : (m.height || 9) / (m.width || 16);
+      const keyed = o.chroma && o.chroma !== 'none';
+      el.style.cssText = `left:${o.x * 100}%;top:${o.y * 100}%;width:${o.w * 100}%;aspect-ratio:${1 / ar};` +
+        `border-radius:${o.shape === 'circle' ? '50%' : '0'};display:${visible ? 'block' : 'none'}`;
+      v.style.display = keyed ? 'none' : 'block';
+      c.style.display = keyed ? 'block' : 'none';
+      v.volume = clamp(+(o.volume ?? 1), 0, 1);
+      if (!visible) { if (!v.paused) v.pause(); continue; }
+      this.syncMedia(v, +o.in + (t - o.start), force);
+    }
+    for (const [id, el] of this.pips) if (!seen.has(id)) { el.remove(); this.pips.delete(id); }
+    const aseen = new Set();
+    for (const a of p.audio || []) {
+      const m = media[a.media];
+      if (!m) continue;
+      aseen.add(a.id);
+      let el = this.audios.get(a.id);
+      if (!el) { el = new Audio(); el.preload = 'auto'; this.audios.set(a.id, el); }
+      const url = `/api/projects/${this.app.pid}/media/${m.id}`;
+      if (el.dataset.url !== url) { el.dataset.url = url; el.src = url; }
+      const visible = t >= a.start && t < a.end;
+      if (!visible) { if (!el.paused) el.pause(); continue; }
+      const fi = +a.fade_in || 0, fo = +a.fade_out || 0;
+      let g = 1;
+      if (fi > 0) g = Math.min(g, (t - a.start) / fi);
+      if (fo > 0) g = Math.min(g, (a.end - t) / fo);
+      el.volume = clamp((+(a.volume ?? 1)) * clamp(g, 0, 1), 0, 1);
+      this.syncMedia(el, +a.in + (t - a.start), force);
+    }
+    for (const [id, el] of this.audios) if (!aseen.has(id)) { el.pause(); this.audios.delete(id); }
+  }
+
+  // Green/blue-screen removal for the preview (same maths as ffmpeg's chromakey filter).
+  drawChroma() {
+    for (const o of this.p.overlays) {
+      if (o.type !== 'video' || !o.chroma || o.chroma === 'none') continue;
+      const el = this.pips.get(o.id);
+      if (!el || el.style.display === 'none') continue;
+      const v = el.firstChild, c = el.lastChild;
+      if (v.readyState < 2) continue;
+      const vw = v.videoWidth, vh = v.videoHeight;
+      const circle = o.shape === 'circle';
+      const side = Math.min(vw, vh);
+      const cw = Math.min(360, circle ? side : vw), ch = Math.round(circle ? cw : cw * vh / vw);
+      if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      if (circle) ctx.drawImage(v, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, cw, ch);
+      else ctx.drawImage(v, 0, 0, cw, ch);
+      const img = ctx.getImageData(0, 0, cw, ch), d = img.data;
+      const key = (o.chroma === 'custom' ? o.chroma_color : { green: '#00FF00', blue: '#0000FF' }[o.chroma]) || '#00FF00';
+      const n = parseInt(key.slice(1), 16), kr = n >> 16 & 255, kg = n >> 8 & 255, kb = n & 255;
+      const ku = -0.169 * kr - 0.331 * kg + 0.5 * kb + 128, kv = 0.5 * kr - 0.419 * kg - 0.081 * kb + 128;
+      const sim = clamp(+(o.chroma_sim ?? 0.15), 0.01, 0.6), blend = 0.08;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        const du = -0.169 * r - 0.331 * g + 0.5 * b + 128 - ku, dv = 0.5 * r - 0.419 * g - 0.081 * b + 128 - kv;
+        const diff = Math.sqrt((du * du + dv * dv) / (255 * 255 * 2));
+        d[i + 3] = diff > sim ? (diff - sim >= blend ? 255 : 255 * (diff - sim) / blend) : 0;
+      }
+      ctx.putImageData(img, 0, 0);
+    }
   }
 
   tick() {
@@ -149,6 +256,7 @@ export class Preview {
     }
     c.restore();
     this.drawEffects();
+    this.drawChroma();
     this.renderLayer();
   }
 
@@ -345,21 +453,35 @@ export class Preview {
     const sel = app.selection;
     const cap = captionAt(p, t);
     const esc = (s) => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-    // stickers, then text (same stacking order as the final render: pictures < captions < text)
-    const ordered = [...p.overlays.filter(o => o.type === 'image'), ...p.overlays.filter(o => o.type !== 'image')];
+    // pictures & video overlays (behind), then text and titles (in front) - same order as the render
+    const W = this.size().W, H = this.size().H, k = this.k;
+    const S = this.meta.text_styles, TT = this.meta.title_templates;
     const texts = [];
-    for (const o of ordered) {
+    for (const o of p.overlays) {
       const visible = t >= o.start && t <= o.end;
       const selected = sel && sel.kind === 'overlay' && sel.id === o.id;
       if (!visible && !selected) continue;
       const cls = `ov ${selected ? 'selected' : ''} ${visible ? '' : 'ghost'}`;
+      // show a selected-but-hidden item fully animated in, so it can still be placed
+      const te = visible ? t : +o.start + Math.min(1.0, (o.end - o.start) / 2);
       if (o.type === 'image') {
         parts.push(`<div class="${cls}" data-kind="overlay" data-id="${o.id}" style="left:${o.x * 100}%;top:${o.y * 100}%;width:${o.w * 100}%">
           <img src="/files/${app.pid}/${o.src}" draggable="false"><span class="handle" data-resize="1"></span></div>`);
+      } else if (o.type === 'video') {
+        const m = p.media.find(x => x.id === o.media) || {};
+        const ar = o.shape === 'circle' ? 1 : ((m.height || 9) / (m.width || 16));
+        parts.push(`<div class="${cls} pip-hit" data-kind="overlay" data-id="${o.id}" style="left:${o.x * 100}%;top:${o.y * 100}%;
+          width:${o.w * 100}%;aspect-ratio:${1 / ar};${o.shape === 'circle' ? 'border-radius:50%' : ''}"><span class="handle" data-resize="1"></span></div>`);
+      } else if (o.type === 'title') {
+        const { lay, html } = titleHtml(o, TT, W, H, k, te);
+        texts.push(`<div class="${cls} title-ov" data-kind="overlay" data-id="${o.id}" style="left:${lay.x0 * k}px;top:${lay.y0 * k}px;
+          width:${lay.w * k}px;height:${lay.h * k}px;transform:rotate(${lay.rot}deg);transform-origin:${(lay.cx - lay.x0) * k}px ${(lay.cy - lay.y0) * k}px">
+          ${html}<span class="handle" data-resize="1"></span></div>`);
       } else {
+        const an = textAnim(o, te, W, H);
         texts.push(`<div class="${cls} text-ov" data-kind="overlay" data-id="${o.id}" style="left:${o.x * 100}%;top:${o.y * 100}%;
-          font-size:calc(var(--u) * ${o.size || 70} * 1px);color:${o.color || '#fff'};font-family:${esc(o.font || 'Arial')};
-          -webkit-text-stroke:calc(var(--u) * ${(o.outline_width ?? 5) * 2}px) ${o.outline || '#000'}">${esc(o.text || '').replace(/\n/g, '<br>')}<span class="handle" data-resize="1"></span></div>`);
+          ${styleCss(o, S, W, H, k)};opacity:${an.opacity};${an.blur ? `filter:blur(${an.blur * k}px);` : ''}
+          transform:translate(-50%,-50%) translate(${an.dx * k}px,${an.dy * k}px) scale(${an.scale})">${typewriterHtml(displayText(o, S), an.chars)}<span class="handle" data-resize="1"></span></div>`);
       }
     }
     // caption (+ avatar)

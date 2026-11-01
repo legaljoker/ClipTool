@@ -1,7 +1,7 @@
 """Turns an editor project into one ffmpeg command (final video or a single preview frame)."""
 from __future__ import annotations
 
-import re
+import shutil
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from cliptool import reformat
+from cliptool.editor import textfx
 from cliptool.avatars import ImageCache, _talk_frames, _write_concat
 from cliptool.captions import _inline_color, ass_escape, ass_time, group_words, hex_to_ass
-from cliptool.editor.project import (CANVAS_PRESETS, EFFECTS, ProjectStore, clip_length, clip_starts, find,
+from cliptool.editor.project import (CANVAS_PRESETS, CHROMA_COLORS, EFFECTS, ProjectStore, clip_length, clip_starts, find,
                                      media_path, total_duration, transition_duration)
 from cliptool.emotions import FALLBACKS
 from cliptool.export import PLATFORMS
@@ -110,6 +111,8 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Cap,{st.get('font', 'Arial')},{fs},{hex_to_ass(st.get('color', '#FFFFFF'))},{hex_to_ass(highlight)},{hex_to_ass(st.get('outline', '#000000'))},{hex_to_ass('#000000', 0x80)},-1,0,0,0,100,100,0,0,1,{outline},{max(1, outline // 2)},5,10,10,10,1
 Style: Txt,Arial,60,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,5,10,10,10,1
+Style: Box,Arial,60,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,3,10,0,5,10,10,10,1
+Style: Shape,Arial,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -129,16 +132,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ev.append(f"Dialogue: 0,{ass_time(s)},{ass_time(e)},Cap,,0,0,0,,"
                       f"{{\\an5\\pos({X},{Y})\\c{_inline_color(base)}}}" + " ".join(parts))
     for o in p["overlays"]:
-        if o.get("type") != "text" or not (o.get("text") or "").strip():
-            continue
-        ox, oy = int(_num(o.get("x"), 0.5) * W), int(_num(o.get("y"), 0.2) * H)
-        size = font_px(p, _num(o.get("size"), 70))
-        bord = max(0, int(round(_num(o.get("outline_width"), 5) * min(W, H) / 1080)))
-        font = re.sub(r"[{}\\,]", "", o.get("font") or "Arial")
-        tags = (f"\\q2\\an5\\pos({ox},{oy})\\fn{font}\\fs{size}\\bord{bord}\\shad{max(1, bord // 2)}"
-                f"\\c{_inline_color(o.get('color', '#FFFFFF'))}\\3c{_inline_color(o.get('outline', '#000000'))}")
-        lines = "\\N".join(ass_escape(line) for line in str(o["text"]).splitlines())
-        ev.append(f"Dialogue: 1,{ass_time(_num(o['start']))},{ass_time(_num(o['end']))},Txt,,0,0,0,,{{{tags}}}{lines}")
+        if o.get("type") == "text":
+            ev.extend(textfx.text_events(o, W, H))
+        elif o.get("type") == "title":
+            ev.extend(textfx.title_events(o, W, H))
     return header + "\n".join(ev) + "\n"
 
 
@@ -371,19 +368,44 @@ def build_plan(p: dict, store: ProjectStore, pid: str, work: Path, audio: bool =
         graph.append(f"[{cur}]{','.join(fx)}[fx]")
         cur = "fx"
 
-    for j, o in enumerate(x for x in p["overlays"] if x.get("type") == "image" and x.get("src")):
-        img = store.resolve(pid, o["src"])
-        if not img.exists():
-            log.warning("Sticker image missing: %s", img)
-            continue
-        k = add_input(["-loop", "1", "-t", f"{total + 1:.3f}", "-i", img])
+    extra_audio: list[str] = []  # labels mixed into the soundtrack
+    for j, o in enumerate(x for x in p["overlays"] if x.get("type") in ("image", "video")):
         pw = max(2, int(_num(o.get("w"), 0.3) * W) // 2 * 2)
         a, b = _num(o.get("start")), _num(o.get("end"), total)
         x, y = _num(o.get("x"), 0.5) * W, _num(o.get("y"), 0.3) * H
-        graph.append(f"[{k}:v]scale={pw}:-2,format=rgba[img{j}]")
+        if o["type"] == "image":
+            if not o.get("src") or not store.resolve(pid, o["src"]).exists():
+                log.warning("Picture missing: %s", o.get("src"))
+                continue
+            k = add_input(["-loop", "1", "-t", f"{total + 1:.3f}", "-i", store.resolve(pid, o["src"])])
+            graph.append(f"[{k}:v]scale={pw}:-2,format=rgba[img{j}]")
+        else:
+            m = media_by_id.get(o.get("media"))
+            if not m or not media_path(store, pid, m).exists():
+                log.warning("Video overlay file missing for %s", o.get("id"))
+                continue
+            L = max(0.05, _num(o.get("out")) - _num(o.get("in")))
+            dec = ["-c:v", "libvpx-vp9"] if m.get("alpha") else []  # keeps the transparency of VTuber webm
+            k = add_input([*dec, "-ss", f"{_num(o.get('in')):.3f}", "-t", f"{L:.3f}", "-i", media_path(store, pid, m)])
+            graph.extend(video_overlay_chain(o, k, j, pw, a))
+            vol = max(0.0, min(4.0, _num(o.get("volume"), 1.0)))
+            if audio and m.get("has_audio") and vol > 0:
+                graph.append(audio_chain(f"{k}:a", vol, a, 0, 0, f"ova{j}"))
+                extra_audio.append(f"ova{j}")
         graph.append(f"[{cur}][img{j}]overlay=x='{x:.1f}-w/2':y='{y:.1f}-h/2':"
-                     f"enable='between(t,{a:.3f},{b:.3f})':eof_action=pass[ov{j}]")
+                     f"enable='between(t,{a:.3f},{b:.3f})':eof_action=pass:format=auto[ov{j}]")
         cur = f"ov{j}"
+
+    if audio:
+        for j, it in enumerate(p.get("audio", [])):
+            m = media_by_id.get(it["media"])
+            if not m or not media_path(store, pid, m).exists():
+                continue
+            L = max(0.05, _num(it["out"]) - _num(it["in"]))
+            k = add_input(["-ss", f"{_num(it['in']):.3f}", "-t", f"{L:.3f}", "-i", media_path(store, pid, m)])
+            graph.append(audio_chain(f"{k}:a", max(0.0, min(4.0, _num(it.get("volume"), 1.0))), _num(it["start"]),
+                                     _num(it.get("fade_in")), _num(it.get("fade_out")), f"aud{j}", L))
+            extra_audio.append(f"aud{j}")
 
     track = build_avatar_track(p, store, pid, work)
     if track:
@@ -392,14 +414,24 @@ def build_plan(p: dict, store: ProjectStore, pid: str, work: Path, audio: bool =
         graph.append(f"[{cur}][avt]overlay=x='{track.x}':y='{track.y}':eof_action=pass:format=auto[av]")
         cur = "av"
 
-    if p["captions"] or any(o.get("type") == "text" for o in p["overlays"]):
+    if p["captions"] or any(o.get("type") in ("text", "title") for o in p["overlays"]):
         (work / "captions.ass").write_text(build_ass(p), encoding="utf-8")
-        graph.append(f"[{cur}]ass=captions.ass[cap]")
+        fonts = work / "fonts"  # bundled fonts, next to the subtitle file (no path escaping needed)
+        fonts.mkdir(exist_ok=True)
+        for f in textfx.font_files():
+            if not (fonts / f.name).exists():
+                shutil.copyfile(f, fonts / f.name)
+        graph.append(f"[{cur}]ass=captions.ass:fontsdir=fonts[cap]")
         cur = "cap"
 
     graph.append(f"[{cur}]fps={FPS},format=yuv420p[vout]")
     maps = ["-map", "[vout]"]
     if audio:
+        if extra_audio:
+            labels = "".join(f"[{x}]" for x in [seq_a, *extra_audio])
+            graph.append(f"{labels}amix=inputs={1 + len(extra_audio)}:normalize=0:duration=first:"
+                         f"dropout_transition=0[mixa]")
+            seq_a = "mixa"
         a_out = f"[{seq_a}]"
         if p.get("export", {}).get("loudnorm", True):
             graph.append(f"[{seq_a}]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[aout]")
@@ -409,6 +441,43 @@ def build_plan(p: dict, store: ProjectStore, pid: str, work: Path, audio: bool =
     script.write_text(";\n".join(graph), encoding="utf-8")
     args = [*inputs, *filter_script_args(Path(script.name)), *maps]
     return Plan(args, total, script)
+
+
+def audio_chain(src: str, vol: float, start: float, fade_in: float, fade_out: float, label: str,
+                length: Optional[float] = None) -> str:
+    chain = f"[{src}]asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume={vol:.2f}"
+    if fade_in > 0:
+        chain += f",afade=t=in:d={fade_in:.2f}"
+    if fade_out > 0 and length:
+        chain += f",afade=t=out:st={max(0.0, length - fade_out):.2f}:d={fade_out:.2f}"
+    ms = int(round(start * 1000))
+    return chain + (f",adelay={ms}:all=1" if ms > 0 else "") + f"[{label}]"
+
+
+def video_overlay_chain(o: dict, k: int, j: int, pw: int, start: float) -> list[str]:
+    """Webcam / VTuber / any video placed on top: size, green-screen removal, circle shape."""
+    shape = o.get("shape", "rect")
+    chain = f"[{k}:v]setpts=PTS-STARTPTS+{start:.3f}/TB,fps={FPS}"
+    if shape == "circle":
+        chain += f",crop='min(iw,ih)':'min(iw,ih)',scale={pw}:{pw}"
+    else:
+        chain += f",scale={pw}:-2"
+    chroma = o.get("chroma") or "none"
+    if chroma != "none":
+        col = (o.get("chroma_color") if chroma == "custom" else CHROMA_COLORS.get(chroma)) or "#00FF00"
+        sim = max(0.01, min(0.6, _num(o.get("chroma_sim"), 0.15)))
+        chain += f",chromakey=0x{col.lstrip('#')}:{sim:.3f}:0.08"
+    chain += ",format=yuva420p"
+    if shape != "circle":
+        return [chain + f"[img{j}]"]
+    out = [chain + f"[vc{j}]",
+           f"color=c=black:s={pw}x{pw}:d=0.04,format=gray,geq=lum='if(lte(hypot(X-W/2+0.5,Y-H/2+0.5),W/2-1),255,0)'[mask{j}]"]
+    if chroma != "none":
+        out += [f"[vc{j}]split[vc{j}a][vc{j}b]", f"[vc{j}a]alphaextract[al{j}]",
+                f"[al{j}][mask{j}]blend=all_mode=multiply[am{j}]", f"[vc{j}b][am{j}]alphamerge[img{j}]"]
+    else:
+        out += [f"[vc{j}][mask{j}]alphamerge[img{j}]"]
+    return out
 
 
 def encode_args(p: dict, quality: str = "high") -> list:

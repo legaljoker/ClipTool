@@ -28,7 +28,21 @@ Turn raw recordings into finished **TikTok**, **YouTube Shorts**, **Instagram Re
 
 ## 1. Install (one time)
 
-### Windows
+### Windows: the ClipTool Editor app (recommended)
+1. Go to the **[Releases page](https://github.com/legaljoker/ClipTool/releases)** and download
+   **`ClipTool-Editor-Setup-<version>.exe`**.
+2. Run it. It installs for your user account only, so no administrator password is needed, and it
+   adds ClipTool Editor to the Start menu (and optionally the desktop).
+3. Start **ClipTool Editor**. It opens in its own window.
+
+Nothing else is needed: Python and ffmpeg are built in. Your projects and finished videos are kept in
+**Documents\ClipTool**. Windows may show "Windows protected your PC" the first time, because the app
+isn't code-signed. Click **More info → Run anyway**.
+
+Prefer no installer? Download `ClipTool-Editor-<version>-portable.zip`, unzip it anywhere, and run
+`ClipTool-Editor.exe`.
+
+### Windows: menu tools and command line (from source)
 1. Install **Python 3.10 or newer** from [python.org](https://www.python.org/downloads/).
    During setup, tick **"Add python.exe to PATH"**.
 2. Download or clone this folder, then double-click **`install.bat`**.
@@ -125,11 +139,16 @@ All menu options are also available as commands. Run `./run.sh --help` to list t
 
 ## 3. The video editor
 
-Start it with **`ClipTool-Editor.bat`** (Windows), **`./editor.sh`** (macOS/Linux), or menu option
-**E**. It opens in your web browser. It runs only on your computer; nothing is uploaded to the
-internet. Keep the black window open while you edit.
+Start **ClipTool Editor** from the Start menu (installed app). From source, use `ClipTool-Editor.bat`,
+`./editor.sh` or menu option **E**. It runs only on your computer; nothing is uploaded to the internet.
 
-Each project is saved automatically in `projects/<name>/`. Finished videos go to `projects/<name>/exports/`.
+Each project is saved automatically in `Documents\ClipTool\projects\<name>\` (installed app) or
+`projects/<name>/` (source). Finished videos go to the project's `exports` folder.
+
+**Everything you drag is live.** While you drag an effect, text or title over the timeline or the
+video, it already shows in the preview. A ghost bar and a time tooltip show exactly where it will
+land. Moving or resizing a bar also moves the preview to that spot. Drag a clip's middle to move it to
+another place in the video; its captions and effects go with it.
 
 | To do this | Do this |
 |---|---|
@@ -143,7 +162,14 @@ Each project is saved automatically in `projects/<name>/`. Finished videos go to
 | **Captions** | **Captions** tab, **Create captions from speech**. ClipTool can also work out who is talking and guess expressions. You can edit any caption, and choose **who is talking** and their **expression** per caption. |
 | **Place the captions** | Drag the caption on the video. |
 | **People & avatars** | **People** tab: one person per speaker. Give each a picture for every expression: Neutral, Happy, Sad, Mad, Angry, ROFL, LOL, Disappointed, Face slap (plus Excited, Surprised, Scared). Drop your own images, or click **Cartoon faces** / **From a photo** to make a full set. Each set includes "talking" versions that alternate while the person speaks. |
-| **Text & pictures** | **Text & Pics** tab, or drop a picture straight onto the video. Drag to move it and drag the yellow corner to resize. Its bar on the timeline sets when it shows. |
+| **Text** | **Text & Pics** tab. Choose from 11 styles: Plain, Bold, Clipped, Highlighter, Hackerman, Intuition, Meme, Outline, Pixel, Signature, Neon. Each text can animate in (fade, pop, slide, zoom, blur, typewriter) and out. |
+| **Animated titles** | **Text & Pics → Animated titles**: motion titles with a second line (bar, slanted bar, accent box, accent circle, underline, line-in). Pick your own colors. |
+| **Pictures** | Drop a picture straight onto the video. Drag to move it and drag the yellow corner to resize. Its bar on the timeline sets when it shows. |
+| **Record your voice** | **Record → Voice**: pick your microphone, press the round button to start, press again to stop. Listen back, then **Add at the playhead**. It goes on the **Audio** track, where you can drag it anywhere, drag its ends to trim it, split it (**S**), and set its volume and fade in/out. Up to 5 minutes per recording. |
+| **Record your webcam** | **Record → Webcam**: pick a camera and microphone and record. Add it **on top of the video** (picture-in-picture: drag/resize it, make it a circle) or as a normal clip. |
+| **VTuber** | Pick your VTuber app's virtual camera (VTube Studio, Veadotube, OBS Virtual Camera...) in **Record → Webcam**. Or upload a video of your 2D/3D model with **Record → VTuber / video on top**. Turn on **Remove background** for green or blue screens; transparent .webm files keep their transparency. |
+| **Music & sounds** | **Record → Music / sound**, or drop audio files (mp3, wav, m4a...) onto the window. They go on the **Audio** track. |
+| **Expressions** | **People** tab, at the bottom: add your own expressions (name + emoji) or remove ones you don't use. **Cartoon faces** makes a face for every expression; custom ones use their emoji. |
 | **Check the real result** | **Exact preview** renders the current frame with ffmpeg, exactly as the final video will look. |
 | **Render** | **Render video**. The video shape (TikTok / Shorts / Reels / YouTube / Square) sets the size and bitrate. |
 

@@ -115,8 +115,11 @@ export function captionAt(p, t) {
 
 // Everything that sits on the timeline besides clips.
 export function timedItems(p) {
-  return [...p.captions, ...p.effects, ...p.overlays];
+  return [...p.captions, ...p.effects, ...p.overlays, ...(p.audio || [])];
 }
+
+// Items cut from a file (audio, video overlays) keep end - start == out - in.
+const fromFile = (it) => it.media !== undefined && it.in !== undefined;
 
 // Shift items starting at/after `from` by `delta` seconds (ripple).
 export function rippleShift(p, from, delta) {
@@ -127,7 +130,9 @@ export function rippleShift(p, from, delta) {
       it.end = Math.max(it.start + 0.05, it.end + delta);
       if (it.words) it.words.forEach(w => { w.start += delta; w.end += delta; });
     } else if (it.end > from && delta < 0) {
-      it.end = Math.max(it.start + 0.05, it.end + delta);
+      const newEnd = Math.max(it.start + 0.05, it.end + delta);
+      if (fromFile(it)) it.out = +it.out - (it.end - newEnd);
+      it.end = newEnd;
     }
   }
 }
@@ -138,7 +143,23 @@ export function rippleDelete(p, a, b) {
   p.captions = p.captions.filter(c => !(c.start >= a && c.end <= b));
   p.effects = p.effects.filter(c => !(c.start >= a && c.end <= b));
   p.overlays = p.overlays.filter(c => !(c.start >= a && c.end <= b));
+  p.audio = (p.audio || []).filter(c => !(c.start >= a && c.end <= b));
   rippleShift(p, b, -len);
+}
+
+// After clips are reordered, move every timed item with the clip it sat on.
+export function remapAfterReorder(p, oldClips, transitions) {
+  const oldStarts = clipStarts(oldClips, transitions);
+  const newStarts = clipStarts(p.clips, transitions);
+  const newById = Object.fromEntries(p.clips.map((c, i) => [c.id, newStarts[i]]));
+  for (const it of timedItems(p)) {
+    const i = oldClips.findIndex((c, k) => it.start >= oldStarts[k] && it.start < oldStarts[k] + clipLength(c));
+    if (i < 0) continue;
+    const shift = newById[oldClips[i].id] - oldStarts[i];
+    if (!shift) continue;
+    it.start += shift; it.end += shift;
+    if (it.words) it.words.forEach(w => { w.start += shift; w.end += shift; });
+  }
 }
 
 export function fmtTime(t, ms = true) {

@@ -217,15 +217,29 @@ function lighten(hex, k) {
 
 export const SKIN = '#FFD54A';
 
-export function drawCartoon(expr, talk, skin = SKIN, size = 256) {
+const BUILT_IN = new Set(['neutral', 'happy', 'sad', 'mad', 'angry', 'rofl', 'lol', 'disappointed', 'face_slap',
+  'excited', 'surprised', 'scared']);
+
+// Custom expressions are drawn from their emoji (talking = a little bigger, like a bounce).
+function emojiFace(ctx, s, emoji, talk) {
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `${Math.round(s * (talk ? 0.8 : 0.74))}px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif`;
+  ctx.fillText(emoji || '🙂', s / 2, s * 0.54);
+  ctx.restore();
+}
+
+export function drawCartoon(expr, talk, skin = SKIN, size = 256, emoji = '') {
   const cv = document.createElement('canvas');
   cv.width = cv.height = size;
-  face(cv.getContext('2d'), size, expr, talk, skin);
+  if (BUILT_IN.has(expr)) face(cv.getContext('2d'), size, expr, talk, skin);
+  else emojiFace(cv.getContext('2d'), size, emoji, talk);
   return cv;
 }
 
 // A person's photo in a circle with a small cartoon badge showing the expression.
-export function drawPhotoAvatar(img, expr, talk, ring = '#FFFFFF', size = 256) {
+export function drawPhotoAvatar(img, expr, talk, ring = '#FFFFFF', size = 256, emoji = '') {
   const cv = document.createElement('canvas');
   cv.width = cv.height = size;
   const c = cv.getContext('2d');
@@ -238,7 +252,7 @@ export function drawPhotoAvatar(img, expr, talk, ring = '#FFFFFF', size = 256) {
   c.restore();
   c.lineWidth = size * 0.035; c.strokeStyle = ring;
   c.beginPath(); c.arc(cx, cy, r, 0, TAU); c.stroke();
-  const badge = drawCartoon(expr, talk, SKIN, Math.round(size * 0.48));
+  const badge = drawCartoon(expr, talk, SKIN, Math.round(size * 0.48), emoji);
   c.drawImage(badge, size - badge.width - size * 0.01, size - badge.height - size * 0.01);
   return cv;
 }

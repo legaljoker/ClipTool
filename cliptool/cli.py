@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from cliptool import __version__
-from cliptool.config import APP_ROOT, load_config
+from cliptool.config import RESOURCE_ROOT, load_config
 from cliptool.export import PLATFORMS
 from cliptool.reformat import CROP_MODES, FRAME_STYLES
 from cliptool.logger import setup_logging
@@ -64,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("-v", "--verbose", action="store_true", help="show detailed output")
     sub = ap.add_subparsers(dest="command")
     sub.add_parser("menu", help="interactive menu (default)")
+    sub.add_parser("app", help="open the video editor in its own window (desktop app)")
     ed = sub.add_parser("editor", help="open the video editor in your web browser")
     ed.add_argument("--port", type=int, default=8765)
     ed.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
@@ -114,7 +115,7 @@ def options_from_args(args: argparse.Namespace, preset: dict, cfg) -> JobOptions
 
 
 def show_changelog() -> None:
-    path = APP_ROOT / "CHANGELOG.md"
+    path = RESOURCE_ROOT / "CHANGELOG.md"
     print(path.read_text(encoding="utf-8") if path.exists() else "CHANGELOG.md not found.")
 
 
@@ -138,6 +139,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in (None, "menu"):
         from cliptool.menu import run_menu
         return run_menu(cfg)
+    if args.command == "app":
+        from cliptool.desktop import main as desktop_main
+        return desktop_main([])
     if args.command == "editor":
         from cliptool.editor.server import run_editor
         return run_editor(cfg, args.port, not args.no_browser)
