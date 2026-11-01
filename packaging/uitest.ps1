@@ -33,6 +33,15 @@ function Shot($file) {
   $bmp.Save("uitest_shots\$file", [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
 }
 
+# Control: does simulated typing work on this machine at all? (a plain Windows text box)
+$form = New-Object System.Windows.Forms.Form
+$tb = New-Object System.Windows.Forms.TextBox
+$form.Controls.Add($tb); $form.Show(); $form.Activate(); $tb.Focus() | Out-Null
+[System.Windows.Forms.SendKeys]::SendWait("ctl")
+[System.Windows.Forms.Application]::DoEvents()
+Write-Host "Control text box got: '$($tb.Text)'"
+$form.Close()
+
 $proc = Start-Process -FilePath $Exe -PassThru
 $s = $null
 for ($i = 0; $i -lt 120 -and -not ($s -and $s.rect); $i++) { Start-Sleep -Milliseconds 500; $s = Read-State }
@@ -61,8 +70,25 @@ Start-Sleep -Milliseconds 700
 Start-Sleep -Seconds 1
 $after = Read-State
 Shot "$Name.png"
+Write-Host "Typed without clicking: '$noClick'.  After clicking and typing: '$($after.value)'  ($($after | ConvertTo-Json -Compress -Depth 4))"
+
+# 3) press Create, then type into the project name at the top (worked for the user)
+function Click($r) {
+  $cx = [int]($pt.X + $r.x * $s.dpr); $cy = [int]($pt.Y + $r.y * $s.dpr)
+  [void][U32]::SetCursorPos($cx, $cy)
+  [U32]::mouse_event(0x2, 0, 0, 0, [UIntPtr]::Zero); [U32]::mouse_event(0x4, 0, 0, 0, [UIntPtr]::Zero)
+}
+Click $after.create
+Start-Sleep -Seconds 3
+$st = Read-State
+Write-Host "After Create: modal open = $($st.modal), header = '$($st.header)'"
+if ($st.headerRect) {
+  Click $st.headerRect; Start-Sleep -Milliseconds 600
+  [System.Windows.Forms.SendKeys]::SendWait("{END}xyz"); Start-Sleep -Seconds 1
+  $st = Read-State
+  Write-Host "Header after typing: '$($st.header)'  keys seen by the page: $($st.keys | ConvertTo-Json -Compress)"
+}
 Stop-Process -Id $proc.Id -Force
-Write-Host "Typed without clicking: '$noClick'.  After clicking and typing: '$($after.value)'  ($($after | ConvertTo-Json -Compress))"
 if ($after.value -eq "hello" -and $noClick -eq "ab") { Write-Host "RESULT ${Name}: typing works"; exit 0 }
 Write-Host "RESULT ${Name}: typing does NOT work"
 exit 1

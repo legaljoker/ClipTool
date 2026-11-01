@@ -324,3 +324,16 @@ def test_recording_upload_is_made_seekable(media_dir, cfg, tmp_path):
     assert entry["kind"] == "audio" and entry["path"].endswith("_rec.webm") and entry["thumb"].endswith(".png")
     assert abs(entry["duration"] - 1.5) < 0.1 and entry["recording"] is True
     assert not raw.exists()
+
+
+def test_key_handlers_do_not_swallow_typing():
+    """`el.onkeydown = (e) => e.key === 'Enter' && go()` returns false for every other key, which
+    cancels it: nothing could be typed into the new-project name (bug reported in 1.2)."""
+    import re
+    static = Path(__file__).resolve().parent.parent / "cliptool" / "editor" / "static" / "js"
+    bad = []
+    for f in static.glob("*.js"):
+        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(r"\.onkey(down|press|up)\s*=\s*\(?\w*\)?\s*=>\s*[^{\s]", line):
+                bad.append(f"{f.name}:{n}: {line.strip()}")
+    assert not bad, "key handlers must use a { block } body:\n" + "\n".join(bad)

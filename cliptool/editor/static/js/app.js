@@ -73,15 +73,18 @@ class App {
 
   // Only for the automated typing test of the Windows build (CLIPTOOL_UITEST=1).
   uiTestReporter() {
+    const keys = { down: 0, input: 0, last: '' };
+    window.addEventListener('keydown', (e) => { keys.down++; keys.last = e.key; }, true);
+    document.addEventListener('input', () => { keys.input++; }, true);
+    const at = (sel) => { const el = $(sel); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
     setInterval(() => {
-      const el = $('#new-name');
-      const r = el?.getBoundingClientRect();
       api('POST', '/api/uitest', {
-        value: el?.value ?? null, active: document.activeElement?.id || document.activeElement?.tagName,
-        hasFocus: document.hasFocus(), dpr: devicePixelRatio, innerWidth, innerHeight,
-        rect: r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null,
+        value: $('#new-name')?.value ?? null, header: $('#project-name')?.value ?? null,
+        active: document.activeElement?.id || document.activeElement?.tagName, hasFocus: document.hasFocus(),
+        keys, dpr: devicePixelRatio, innerWidth, innerHeight, modal: !$('#modal').classList.contains('hidden'),
+        rect: at('#new-name'), create: at('#new-go'), headerRect: at('#project-name'),
       }).catch(() => {});
-    }, 400);
+    }, 300);
   }
 
   // ---- projects -------------------------------------------------------------
@@ -104,7 +107,7 @@ class App {
       await this.openProject(r.id);
     };
     $('#new-go').onclick = go;
-    $('#new-name').onkeydown = (e) => e.key === 'Enter' && go();
+    $('#new-name').onkeydown = (e) => { if (e.key === 'Enter') go(); };
     $('#new-name').focus();
     const byId = (id) => list.find(p => p.id === id);
     $$('[data-open]').forEach(b => b.onclick = async () => { this.closeModal(); await this.openProject(b.dataset.open); });
@@ -727,7 +730,7 @@ class App {
         this.toast(`Added "${label}". Give each person a picture for it (drop one on the new slot, or use Cartoon faces).`);
       };
       addExpr.onclick = go;
-      $('#new-expr-name', el).onkeydown = (e) => e.key === 'Enter' && go();
+      $('#new-expr-name', el).onkeydown = (e) => { if (e.key === 'Enter') go(); };
       $$('[data-del-expr]', el).forEach(b => b.onclick = () => {
         const id = b.dataset.delExpr;
         const used = p.captions.filter(c => c.expression === id).length;
