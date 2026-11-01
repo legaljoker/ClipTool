@@ -19,7 +19,8 @@ from pathlib import Path
 
 REQUIRED_FILTERS = ["ass", "xfade", "acrossfade", "zoompan", "chromakey", "alphamerge", "alphaextract", "geq",
                     "amix", "adelay", "afade", "loudnorm", "boxblur", "rgbashift", "vignette", "showwavespic",
-                    "colorchannelmixer", "tpad", "apad"]
+                    "colorchannelmixer", "tpad", "apad", "select", "sidechaincompress", "silencedetect",
+                    "blackdetect", "freezedetect", "ebur128", "astats", "volumedetect", "anoisesrc", "aevalsrc", "sine"]
 
 
 def run(cfg, with_whisper: bool = False) -> int:
@@ -109,6 +110,48 @@ def run(cfg, with_whisper: bool = False) -> int:
         frame = render.render_frame(p, store, pid, 1.2, d / "cache" / "f.jpg", d / "cache" / "w2")
         return f"{info.duration:.2f}s video, frame {frame.stat().st_size} bytes"
 
+    def t_autoedit():
+        from cliptool.editor import autoedit as ae
+        from cliptool.editor import render, sfx
+        from cliptool.editor.project import ProjectStore, total_duration
+        from cliptool.ffmpeg_utils import decode_audio, ffmpeg, probe
+        from cliptool.transcribe import Segment, Transcript, Word
+        store = ProjectStore(work / "projects")
+        pid, p = store.create("Auto edit test")
+        d = store.dir(pid)
+        # 3 "sentences" of sound with 1 s pauses
+        ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=640x360:d=9", "-f", "lavfi", "-i",
+                "aevalsrc='0.5*sin(2*PI*330*t)*lt(mod(t,3),2)':s=48000:d=9", "-c:v", "libx264", "-c:a", "aac",
+                "-shortest", d / "media" / "talk.mp4"], desc="selftest talk")
+        ffmpeg(["-f", "lavfi", "-i", "sine=f=200:d=9", "-c:a", "aac", d / "media" / "music.m4a"], desc="selftest music")
+        segs = []
+        for i, text in enumerate(["here is the secret", "um this is insane", "follow for more"]):
+            ws = text.split()
+            segs.append(Segment(i * 3.0, i * 3.0 + 1.9, text, [Word(i * 3.0 + j * 0.45, i * 3.0 + j * 0.45 + 0.4,
+                                                                    " " + w) for j, w in enumerate(ws)]))
+        tr = Transcript(segs, "en")
+        p["media"] = [{"id": "m1", "kind": "video", "name": "talk.mp4", "path": "media/talk.mp4", "duration": 9,
+                       "width": 640, "height": 360, "has_audio": True, "fps": 30},
+                      {"id": "m2", "kind": "audio", "name": "music.m4a", "path": "media/music.m4a", "duration": 9,
+                       "has_audio": True}]
+        p["clips"] = [{"id": "c1", "media": "m1", "in": 0, "out": 9}]
+        env = ae.Envelope.from_samples(decode_audio(d / "media" / "talk.mp4"))
+        p, st = ae.tighten(p, {"m1": tr}, {"m1": env}, {"keep_pause": 0.12, "min_gap": 0.3})
+        p["captions"] = [{"id": "k1", "start": 0.0, "end": 1.0, "text": "here is the secret",
+                          "words": [{"start": 0.0, "end": 0.4, "text": "here"}], "person": None, "expression": "neutral"}]
+        ae.punch_ins(p)
+        ae.hook_title(p, "Self test hook")
+        p["effects"].append({"id": "eb", "type": "bleep", "start": 1.0, "end": 1.3, "params": {}})
+        sfx.add_sound(p, store, pid, "whoosh", 0.1, 0.5)
+        p["audio"].append({"id": "mu", "media": "m2", "in": 0, "out": 5, "start": 0, "end": 5, "volume": 0.2,
+                           "duck": True})
+        p = store.save(pid, p)
+        video = render.render_video(p, store, pid, d / "exports" / "auto.mp4", d / "cache" / "wa", "draft")
+        got, want = probe(video).duration, total_duration(p)
+        if st["seconds"] < 2 or len(p["clips"]) < 3 or abs(got - want) > 0.2:
+            raise RuntimeError(f"removed {st['seconds']}s, {len(p['clips'])} clips, {got:.2f}s video (want {want:.2f})")
+        return f"removed {st['seconds']:.1f}s of pauses, {len(p['clips'])} pieces, {got:.2f}s video"
+
     def t_server():
         from cliptool.editor.server import make_server
         server = make_server(cfg, 8899)
@@ -118,12 +161,17 @@ def run(cfg, with_whisper: bool = False) -> int:
             html = urllib.request.urlopen(base + "/").read()
             assert b"ClipTool Editor" in html
             meta = json.loads(urllib.request.urlopen(base + "/api/meta").read())
-            assert "text_styles" in meta and "face_slap" in meta["expressions"]
-            for f in ("/static/js/app.js", "/static/js/record.js", "/static/css/app.css", "/static/fonts/Anton_400Regular.ttf"):
+            assert "text_styles" in meta and "face_slap" in meta["expressions"] and "whoosh" in meta["sfx"]
+            for f in ("/static/js/app.js", "/static/js/record.js", "/static/js/autopanel.js", "/static/css/app.css",
+                      "/static/fonts/Anton_400Regular.ttf", "/api/sfx/pop.wav"):
                 assert len(urllib.request.urlopen(base + f).read()) > 100, f
             return base
         finally:
             server.shutdown()
+
+    def t_anthropic():
+        import anthropic
+        return "anthropic " + anthropic.__version__
 
     def t_webview():
         import webview  # noqa: F401
@@ -144,6 +192,7 @@ def run(cfg, with_whisper: bool = False) -> int:
 
     for name, fn in (("ffmpeg found", t_ffmpeg), ("ffmpeg filters & codecs", t_filters),
                      ("filter script option", t_script_option), ("render a full project", t_render),
+                     ("auto edit + render with many cuts", t_autoedit), ("Claude library", t_anthropic),
                      ("editor web server", t_server), ("app window library", t_webview),
                      ("speech-to-text engine", t_whisper)):
         check(name, fn)

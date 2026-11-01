@@ -102,7 +102,7 @@ def check_layer2(p: dict, store, pid: str) -> list[dict]:
         used = any(c["media"] == m["id"] for c in p["clips"]) or any(a["media"] == m["id"] for a in p["audio"]) \
             or any(o.get("media") == m["id"] for o in p["overlays"])
         if used and not media_path(store, pid, m).exists():
-            issues.append(issue("error", f"File missing: {m['name']}", None, "missing"))
+            issues.append(issue("error", f"File missing: {m.get('name') or m.get('path')}", None, "missing"))
     caps = sorted(p["captions"], key=lambda k: k["start"])
     for a, b in zip(caps, caps[1:]):
         if b["start"] < a["end"] - 0.05 and (a.get("person") == b.get("person")):

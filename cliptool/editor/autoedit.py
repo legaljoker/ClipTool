@@ -19,6 +19,7 @@ Passes
 from __future__ import annotations
 
 import copy
+import math
 import re
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -246,7 +247,9 @@ def find_cuts(words: list, clip_in: float, clip_out: float, env: Optional[Envelo
     q = 1.0 / (fps or 30.0)
     out: list[Cut] = []
     for c in sorted(cuts, key=lambda c: c.start):
-        c.start, c.end = round(round(c.start / q) * q, 3), round(round(c.end / q) * q, 3)
+        # round inwards to whole frames: a cut never grows into the speech around it
+        c.start = round(math.ceil(c.start / q - 1e-6) * q, 3)
+        c.end = round(math.floor(c.end / q + 1e-6) * q, 3)
         if c.end - c.start < q:
             continue
         if out and c.start <= out[-1].end + q:
@@ -737,3 +740,18 @@ def claude_plan(p: dict, cfg: dict, want_cold_open: bool) -> Optional[dict]:
     except Exception as exc:
         log.warning("Claude could not plan the edit (%s); using the built-in rules.", exc)
         return None
+
+
+def cut_timeline(p: dict, start: float, end: float) -> tuple[dict, float]:
+    """Remove a part of the edited video (timeline seconds). Returns (new project, seconds removed)."""
+    starts = clip_starts(p["clips"])
+    cuts: dict[int, list[Cut]] = {}
+    for i, (c, s) in enumerate(zip(p["clips"], starts)):
+        e = s + clip_length(c)
+        a, b = max(start, s), min(end, e)
+        if b - a > 0.01:
+            cuts[i] = [Cut(float(c["in"]) + a - s, float(c["in"]) + b - s, "manual")]
+    before = total_duration(p)
+    new, _ = apply_cuts(p, cuts)
+    new = normalize(new)
+    return new, round(before - total_duration(new), 3)

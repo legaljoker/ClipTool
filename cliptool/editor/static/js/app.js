@@ -223,6 +223,8 @@ class App {
   // ---- rendering the UI ---------------------------------------------------------
   renderAll() {
     if (!this.project) return;
+    if (document.activeElement !== $('#project-name')) $('#project-name').value = this.project.name;
+    $('#preset').value = this.project.preset;
     this.renderPanel();
     this.renderInspector();
     this.timeline.render();

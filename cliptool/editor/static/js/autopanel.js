@@ -85,6 +85,11 @@ export function panelAuto(app) {
     <button class="btn" id="qa-run">🩺 Check for problems</button>
     <div id="qa-out">${p.last_qa ? qaHtml(p.last_qa) : ''}</div>
 
+    <h3 style="margin-top:18px">🎨 Copy a look</h3>
+    <p class="hint">Use the captions, frame style, format and title look of another project.</p>
+    <div class="row"><select id="cs-from" style="flex:1"><option value="">Choose a project…</option></select>
+      <button class="btn" id="cs-go">Copy look</button></div>
+
     <h3 style="margin-top:18px">🎣 Hook versions</h3>
     <p class="hint">Test which opening works best: renders one video per hook, each followed by the same main part.
       Mark hooks first with Text &amp; Pics or let ClipTool pick the strongest lines.</p>
@@ -164,6 +169,18 @@ export function bindAuto(app, el) {
       <div class="row"><button class="btn" id="hv-open">📂 Open folder</button><div class="spacer"></div><button class="btn primary" data-close>Close</button></div>`);
     $('#hv-open').onclick = () => api('POST', `/api/projects/${app.pid}/open-folder`);
   };
+  api('GET', '/api/projects').then(list => {
+    const sel = $('#cs-from', el);
+    if (sel) sel.innerHTML += list.filter(x => x.id !== app.pid).map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+  }).catch(() => {});
+  $('#cs-go', el).onclick = async () => {
+    const from = $('#cs-from', el).value;
+    if (!from) return app.toast('Choose a project first.');
+    await app.flushSave();
+    await api('POST', `/api/projects/${app.pid}/copy-style`, { from });
+    await reloadAsOneStep(app);
+    app.toast('Look copied. Undo puts it back.');
+  };
   $$('[data-seek]', el).forEach(a => a.onclick = (e) => { e.preventDefault(); app.seek(+a.dataset.seek); });
 }
 
@@ -185,6 +202,10 @@ export function panelAI(app) {
 }
 
 export function bindAI(app, el) {
+  if (app.aiChatPid !== app.pid) {  // show the saved conversation of this project
+    app.aiChatPid = app.pid;
+    api('GET', `/api/projects/${app.pid}/agent`).then(h => { app.aiChat = h; if (app.tab === 'ai') app.renderPanel(); }).catch(() => {});
+  }
   const box = $('#ai-chat', el);
   box.scrollTop = box.scrollHeight;
   const send = async () => {

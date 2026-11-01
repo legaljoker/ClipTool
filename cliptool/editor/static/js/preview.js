@@ -37,6 +37,24 @@ export class Preview {
 
   get p() { return this.app.project; }
 
+  // Bleep / mute effects: silence the video's sound, and play a tone for bleeps.
+  audioFx(t) {
+    const e = (this.p?.effects || []).find(x => (x.type === 'bleep' || x.type === 'mute') && t >= x.start && t < x.end);
+    const want = !!(e && e.type === 'bleep' && this.playing);
+    if (want !== !!this.beeping) {
+      try {
+        if (want) {
+          this.actx = this.actx || new AudioContext();
+          const o = this.actx.createOscillator(), g = this.actx.createGain();
+          o.frequency.value = +(e.params?.tone) || 1000; g.gain.value = 0.12;
+          o.connect(g).connect(this.actx.destination); o.start();
+          this.beeping = o;
+        } else { this.beeping.stop(); this.beeping = null; }
+      } catch (err) { this.beeping = null; }
+    }
+    return !!e;
+  }
+
   // Let go of every media file (used before a project is deleted).
   unload() {
     this.playing = false;
@@ -123,7 +141,7 @@ export class Preview {
       const url = this.mediaUrl(m);
       if (v.dataset.url !== url) { v.dataset.url = url; v.src = url; }
       v.dataset.clip = a.clip.id;
-      v.volume = clamp(+a.clip.volume || 0, 0, 1);
+      v.volume = this.audioFx(this.time) ? 0 : clamp(+a.clip.volume || 0, 0, 1);
       const drift = Math.abs(v.currentTime - a.local);
       if (this.playing) {
         if (v.paused) { v.currentTime = a.local; v.play().catch(() => {}); }

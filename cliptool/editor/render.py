@@ -4,6 +4,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -24,6 +25,7 @@ from cliptool.transcribe import Word
 log = get_logger("editor.render")
 
 FPS = 30
+STALL_SECONDS = 180  # a render step may be slow (e.g. big blur), but never this long without output
 
 
 class RenderError(RuntimeError):
@@ -580,6 +582,17 @@ def _run(cmd: list, cwd: Path, duration: float, progress: Optional[Callable[[flo
 
     th = threading.Thread(target=read_err, daemon=True)
     th.start()
+    # Safety net: stop ffmpeg if it stops making progress or runs far past the end of the video.
+    state = {"t": time.time(), "secs": -1.0, "why": ""}
+
+    def watchdog():
+        while proc.poll() is None:
+            time.sleep(2)
+            if time.time() - state["t"] > STALL_SECONDS and proc.poll() is None:
+                state["why"] = f"ffmpeg made no progress for {STALL_SECONDS} seconds"
+                proc.kill()
+
+    threading.Thread(target=watchdog, daemon=True).start()
     for line in proc.stdout:
         if cancel is not None and cancel.is_set():
             proc.terminate()
@@ -589,9 +602,18 @@ def _run(cmd: list, cwd: Path, duration: float, progress: Optional[Callable[[flo
                 secs = int(line.split("=", 1)[1]) / 1_000_000
             except ValueError:
                 continue
+            if secs > state["secs"]:
+                state["t"], state["secs"] = time.time(), secs
+            if duration > 0 and secs > duration * 1.5 + 10:
+                state["why"] = "ffmpeg kept writing past the end of the video"
+                proc.kill()
+                break
             if progress and duration > 0:
                 progress(max(0.0, min(1.0, secs / duration)))
     proc.wait()
+    if state["why"]:
+        log.debug("ffmpeg stderr:\n%s", "\n".join(err_lines))
+        raise RenderError(f"Rendering was stopped: {state['why']}. Please report this with the log file.")
     th.join(timeout=2)
     if cancel is not None and cancel.is_set():
         raise RenderError("Render cancelled.")

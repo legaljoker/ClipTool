@@ -794,6 +794,37 @@ class Handler(BaseHTTPRequestHandler):
                                          float(body.get("volume", 0.6)))
                     store.save(pid, p)
                 return self.send_json({"ok": True, "item": item})
+            if rest == ["agent"] and method == "POST":
+                from cliptool.editor import agent
+                body = self.read_json()
+                job = app.jobs.start("agent", pid, lambda j: agent.run_turn(app, pid, str(body.get("message", "")), j,
+                                                                            float(body.get("time") or 0)))
+                return self.send_json(job.to_dict())
+            if rest == ["agent"] and method == "GET":
+                from cliptool.editor import agent
+                return self.send_json(agent.load_history(app, pid))
+            if rest == ["agent", "reset"] and method == "POST":
+                from cliptool.editor import agent
+                agent.history_file(app, pid).unlink(missing_ok=True)
+                return self.send_json({"ok": True})
+            if rest == ["copy-style"] and method == "POST":
+                src = store.load(self.read_json()["from"])
+                with app.lock(pid):
+                    p = store.load(pid)
+                    p["caption_style"] = copy.deepcopy(src["caption_style"])
+                    p["frame"] = copy.deepcopy(src["frame"])
+                    p["preset"] = src["preset"]
+                    titles = [o for o in src["overlays"] if o.get("type") == "title"]
+                    texts = [o for o in src["overlays"] if o.get("type") == "text"]
+                    for o in p["overlays"]:  # titles and texts take the other project's look
+                        model = titles[0] if o.get("type") == "title" and titles else \
+                            texts[0] if o.get("type") == "text" and texts else None
+                        if model:
+                            for f in ("template", "style", "font", "color", "accent", "size", "anim_in", "anim_out"):
+                                if f in model:
+                                    o[f] = model[f]
+                    store.save(pid, p)
+                return self.send_json({"ok": True})
             if rest == ["qa"] and method == "POST":
                 job = app.jobs.start("qa", pid, lambda j: app.qa(pid, j))
                 return self.send_json(job.to_dict())

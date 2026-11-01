@@ -9,6 +9,68 @@ When you change the application, add an entry at the top and bump the version in
 
 ---
 
+## [1.3.0] - 2026-11-01 - Auto Edit, AI Editor, Settings
+
+### Added
+- **Auto Edit tab.** One click edits the whole video and can be undone in one step:
+  - **Tightening**:
+    - cuts pauses and dead air, measured from the sound itself (not only from the speech-to-text
+      timings), so noisy "pauses" with laughing or music are kept
+    - keeps a short natural breath at every cut
+    - never clips the start of a word, and lands on whole frames
+    - removes "um/uh", repeated words and false starts; cuts inside speech go where the sound dips most
+    - captions, effects and text move with the video
+  - **Punch-in zooms** on every other piece of a jump cut, and **zoom punches** on strong words.
+  - **Hook title** over the first seconds, sized to fit the screen.
+  - **Call-out text** for calls to action ("FOLLOW FOR MORE", "LINK IN BIO"...).
+  - **Bleeps** for swear words (sound and captions) and a **cold open** teaser.
+  - **Sound effects** on titles, zooms and call-outs.
+  - **Background music** that dips automatically under the voice.
+  - With a Claude key, Claude plans the title, zooms, call-outs and cold open.
+  - A report of what changed is shown and saved as `auto_edit_report.txt`.
+- **AI Editor tab**: chat with Claude, which edits the project with editing tools:
+  - cut parts, tighten, add or fix captions, caption style
+  - effects, text, titles, sound effects, music, frame style, transitions, volume
+  - a video check
+  It answers with what it changed; each answer is one Undo step. The conversation is kept per project.
+- **Settings window**:
+  - API keys for Claude and ElevenLabs, encrypted with Windows' own protection for your account, with
+    a **Test** button
+  - Claude model and effort
+  - speech-to-text accuracy, language and device
+  - Auto Edit defaults
+  - export file name pattern
+- **Sound effects library** made by ClipTool (whoosh, swoosh, pop, click, ding, impact, riser, bleep,
+  record scratch, boing). With an ElevenLabs key: generate sound effects and background music from a
+  description.
+- **Video check**:
+  - picture and sound: black or frozen picture, long silences, loudness, distortion
+  - captions: overlaps, too fast to read, out of sync
+  - text: cut off at the edges, or hidden behind the TikTok/Shorts buttons
+  - the hook in the first second
+  Results have clickable times; layers that could not be checked are listed as "not checked".
+- **Hook versions**: renders several versions that open with different strong moments.
+- **Copy a look** from another project (captions, frame style, format, title look).
+- **Bleep** and **Mute** effects, and **ducking** for music on the audio track.
+- **Rename and delete projects** in the Projects window.
+- The Windows build now runs a **typing test** of the real program window (real mouse and keyboard),
+  and its self-test includes an Auto Edit render.
+
+### Fixed
+- **Typing into the project name when starting a new project did nothing.** The Enter-key handler
+  cancelled every other key. The same bug affected the name of a new expression.
+- Jumps between pieces of video no longer click: every join gets a 10 ms fade.
+- Rendering videos with many cuts used a lot of memory (every piece was decoded separately). Pieces
+  of one recording are now decoded once.
+- A render with zoom effects could run forever on some ffmpeg versions. Renders now also stop with a
+  clear message if ffmpeg stops making progress.
+- The highlighted caption word in the preview no longer touches its neighbours.
+- The project name and video format at the top now follow Undo/Redo.
+
+### Changed
+- `anthropic` (the Claude library) is now installed with ClipTool; it is only used when you add a key.
+- Export file names follow the pattern in Settings.
+
 ## [1.2.0] - 2026-11-01 - Stand-alone app, text styles, recording, live dragging
 
 ### Added

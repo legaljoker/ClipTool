@@ -7,6 +7,14 @@ Turn raw recordings into finished **TikTok**, **YouTube Shorts**, **Instagram Re
   a timeline with cut and trim, effects with adjustable duration bars, transitions, zoom, text,
   stickers, and captions that show each speaker's avatar with the right expression.
   See section 3.
+- **Auto Edit**: one click tightens the video (cuts pauses, "um/uh" and false starts at quiet
+  moments), hides jump cuts with punch-in zooms, adds zoom punches, a hook title, call-outs,
+  bleeps, a cold-open teaser, sound effects and background music that dips under the voice.
+  See section 3b.
+- **AI Editor**: tell Claude what you want ("cut the part about the weather and add a hook") and it
+  edits your timeline. Needs a Claude API key in **Settings**.
+- **Video check**: finds black or frozen frames, silences, loudness and clipping problems, caption
+  mistakes and text hidden behind the TikTok buttons before you upload.
 - **Auto silence-cutter**: removes dead air.
 - **Auto captions**: Whisper transcription burned in as bold TikTok-style captions, with the spoken
   word highlighted.
@@ -176,6 +184,53 @@ another place in the video; its captions and effects go with it.
 Keyboard: **Space** play/pause · **S** cut · **Delete** delete · **Ctrl+Z / Ctrl+Y** undo/redo ·
 **← →** step one frame (hold Shift for 1 second).
 
+**Projects**: the **Projects** button lists your projects. ✏️ renames one, 🗑 deletes it (with all its
+files, after you confirm).
+
+### 3b. Auto Edit, AI Editor and Settings
+
+**🪄 Auto Edit tab.** Tick what you want and press **Run Auto Edit**. Afterwards a report says what
+changed; **Undo Auto Edit** (or Ctrl+Z) takes all of it back in one step.
+
+| Option | What it does |
+|---|---|
+| Cut pauses and dead air | Measures the sound and cuts silences longer than the limit in **Settings**, keeping a short natural breath (0.12 s by default). Cuts never clip the start of a word and land on whole frames. Captions, effects and text move with the video. |
+| Remove "um" / "uh", repeated words and false starts | "I I think" becomes "I think"; "we went, we went home" becomes "we went home". Repeats people say on purpose ("very very", "no no") stay. |
+| Zoom in / out at cuts | Every other piece of a jump cut is slightly zoomed in, so the cut looks intentional. |
+| Zoom punches on strong words | Quick zooms on words like "insane", "never", numbers and exclamations (at most one every 5 seconds), with a soft swoosh. |
+| Hook title | A title banner over the first 3 seconds: your text, Claude's suggestion, or the strongest line. It shrinks to fit the screen. |
+| Call-out text | "FOLLOW FOR MORE", "LINK IN BIO", "COMMENT BELOW 👇"... when the speaker says it, with a pop sound. |
+| Bleep swear words | A bleep over the word, which is also masked in the captions ("f***"). |
+| Cold open | Repeats the most quotable 2-5 seconds as a teaser at the very start, then flashes into the video. |
+| Background music | Pick a music file from the project. It plays under the whole video and dips automatically while someone talks. |
+
+Also on the Auto Edit tab:
+- **Sound effects**: whoosh, swoosh, pop, click, ding, impact, riser, bleep, record scratch, boing.
+  Click one to put it at the playhead. They are made by ClipTool itself (no downloads, no licences).
+  With an ElevenLabs key you can **generate** new sounds or background music from a description.
+- **Check the video**: renders a quick test (or uses your latest export) and lists problems with
+  clickable times: black or frozen picture, long silences, too quiet / too loud (platforms expect
+  about -14 LUFS), distortion, overlapping or too-fast captions, text cut off at the edges or hidden
+  behind the app's buttons. Anything it could not check is listed as "not checked".
+- **Copy a look**: use the captions, frame style, format and title look of another project.
+- **Hook versions**: renders 2-6 versions, each opening with a different strong moment, to test
+  which keeps viewers. A `hook_versions.txt` in the exports folder lists them.
+
+**🤖 AI Editor tab.** Chat with Claude about your video: "tighten this and make the captions bigger",
+"cut the part where I talk about my cat", "make a hook title and add a whoosh", "check the video
+and fix what's wrong", or paste review notes. Claude reads the captions and the timeline, makes the
+edits with the same tools you have, and tells you what it changed. Each answer is one Undo step.
+
+**⚙️ Settings** (top bar):
+- **API keys** for Claude (AI Editor, Auto Edit planning, smarter clip picks and titles) and
+  ElevenLabs (generated sounds and music). Keys are stored only on this PC, encrypted for your Windows
+  account, and sent only to that service. **Test** checks a key. Without keys everything else works.
+- Claude model (Opus = best, Sonnet = faster, Haiku = fastest) and how thorough it is.
+- Speech-to-text accuracy, language and graphics card.
+- Auto Edit defaults: pause kept at cuts, which pauses to cut, fillers, repeats, punch-ins, bleeps,
+  music level.
+- Export file names, e.g. `{project}_{preset}_{date}` (also `{time}` and `{n}`).
+
 ## 4. Speaker pictures with expressions (menu tools)
 
 1. Run **9) Speakers & expressions** once without pictures. `REPORT.txt` shows who is
@@ -205,7 +260,7 @@ See `avatars/README.txt` for details.
 
 | Upgrade | What it improves | How |
 |---|---|---|
-| Claude AI | Smarter clip ranking, better titles, descriptions and hashtags | `pip install anthropic`, then set the environment variable `ANTHROPIC_API_KEY` |
+| Claude AI | AI Editor, Auto Edit planning, smarter clip ranking, better titles, descriptions and hashtags | Add your key in the editor's **Settings** (or set the environment variable `ANTHROPIC_API_KEY`) |
 | pyannote | Much more accurate speaker identification | `pip install pyannote.audio`. Then create a free token at huggingface.co, accept the terms of `pyannote/speaker-diarization-3.1`, and put the token in `config.yaml` under `speakers.huggingface_token` |
 | transformers | AI expression detection from the words | `pip install transformers torch` |
 | auto-editor | Alternative silence cutter | `pip install auto-editor`, then set `silence.use_auto_editor: true` |
